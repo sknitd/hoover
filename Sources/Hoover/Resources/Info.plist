@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleName</key><string>Hoover</string>
+    <key>CFBundleDisplayName</key><string>Hoover</string>
+    <key>CFBundleIdentifier</key><string>com.sknitd.hoover</string>
+    <key>CFBundleExecutable</key><string>Hoover</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>1.0.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleIconFile</key><string>Hoover</string>
+    <key>LSMinimumSystemVersion</key><string>13.0</string>
+    <key>LSUIElement</key><true/>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>NSAppleEventsUsageDescription</key><string>Hoover can open a folder in a new Finder window when you explicitly double-click it.</string>
+    <key>NSHumanReadableCopyright</key><string>Hoover — Hover deeper. See everything.</string>
+</dict></plist>

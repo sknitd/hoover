@@ -1,0 +1,33 @@
+name: Build and evaluate Hoover
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  macos:
+    name: Native macOS validation (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, test, package and verify signature
+        run: bash scripts/build-app.sh
+      - name: Upload compiled universal macOS app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hoover-${{ matrix.os }}
+          path: dist/Hoover-macOS.zip
+          if-no-files-found: error
+  core:
+    name: Portable core validation
+    runs-on: ubuntu-24.04
+    container: swift:6.1.3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test core and parse native sources
+        run: bash scripts/check-source.sh
