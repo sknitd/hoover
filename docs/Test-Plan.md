@@ -49,6 +49,8 @@ EdgeDock-source/
 
 Repeat A, F, and J in Finder icon, list, column, and gallery views, including hidden extensions, localized filenames, spaces, quotes, and Unicode. Test earlier columns while a different final column is selected. Hovering toolbar/sidebar/search controls or empty Finder background must not resolve a selected file elsewhere.
 
+For no-click activation, leave another app foreground with a Finder List window exposed. Hover a folder name for the full three seconds without clicking Finder; X-Ray should open for that item. Repeat immediately after granting Accessibility and closing Hoover's permission window. Cover the Finder item with another app's window and verify that it cannot activate through that window. Use a disposable pair such as `Report.txt` with its extension hidden and an extensionless `Report`; an ambiguous name-only hover must be suppressed rather than opening the wrong sibling.
+
 Repeat E after focusing the search field. Verify that first Escape preserves the X-Ray session and second Escape lets Finder immediately receive keyboard navigation. Check that clicking another app or dismissing through a successful file/Open With action leaves that app in front; Hoover must not reactivate Finder over the chosen default app. With a Hoover settings window or modal dialog visible, dismissing an overlay must preserve that window's focus.
 
 ## Session, safety, and appearance checks

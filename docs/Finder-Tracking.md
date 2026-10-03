@@ -8,6 +8,8 @@ The probe verifies Finder's process ID, then walks at most 14 AX ancestors. Only
 
 Finder need not be foreground: a visible Finder item can start a dwell while another app remains active, without a preliminary click. This requires a system-wide hit belonging to Finder, not merely a Finder window behind another app. Observations distinguish foreground Finder from verified pointer ownership; neither an unrelated app nor an unverified stale node can activate an overlay.
 
+Name-only fallback requires a complete scan of at most 2,000 direct siblings. It includes hidden siblings when checking exact, localized, and hidden-extension labels, and rejects conflicting AX label attributes. A truncated or failed scan cannot establish uniqueness, so that fallback is suppressed; trusted per-item URL/path attributes remain usable in larger directories.
+
 Native application/document packages (including apps and Xcode projects) are treated as file HUD items; asset catalogs remain expandable folders.
 
 Column views use per-item file URLs or directory URLs on the hit column's container. Where macOS exposes neither, Hoover suppresses the hover rather than combining a row name with the window document URL for another column. That conservative fallback can omit previews in some Finder/OS column-view AX configurations. Actual icon, list, and column-view behavior must be checked on macOS with Accessibility permission granted.

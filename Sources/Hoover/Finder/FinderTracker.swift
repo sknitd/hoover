@@ -199,7 +199,7 @@ private final class FinderAccessibilityProbe {
 
     private struct NameCache {
         let created: Date
-        let entries: [String: [URL]]
+        let index: FinderDisplayNameIndex
     }
 
     init() { AXUIElementSetMessagingTimeout(system, 0.04) }
@@ -452,39 +452,18 @@ private final class FinderAccessibilityProbe {
                 }
             }
         }
-        // Ambiguous labels are rejected. A description containing a comma or a
-        // localized “folder” decoration only succeeds if it is an actual name.
-        for name in names {
-            let exact = directory.appendingPathComponent(name)
-            if FileManager.default.fileExists(atPath: exact.path) { return exact }
-        }
-        // Respect Finder's hidden extensions and localized display names without
-        // guessing among coincidentally matching filenames. Bound this work and
-        // cache it so moving among rows does not enumerate a directory every tick.
+        // A raw filename is also a display label. It cannot bypass the complete
+        // uniqueness check: “Report” may label both Report and hidden Report.pdf.
+        // Cache only the local, bounded snapshot; direct per-item URLs above never
+        // use this fallback and do not depend on directory enumeration.
         let now = Date()
         let key = directory.path
         if directoryCache[key].map({ now.timeIntervalSince($0.created) >= 2 }) ?? true {
-            var entries: [String: [URL]] = [:]
-            let resourceKeys: [URLResourceKey] = [.nameKey, .localizedNameKey, .hasHiddenExtensionKey]
-            if let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: resourceKeys,
-                                                              options: [.skipsSubdirectoryDescendants, .skipsHiddenFiles]) {
-                var count = 0
-                while let url = enumerator.nextObject() as? URL, count < 2_000 {
-                    count += 1
-                    let values = try? url.resourceValues(forKeys: Set(resourceKeys))
-                    var labels = Set([url.lastPathComponent])
-                    if let localized = values?.localizedName { labels.insert(localized) }
-                    if values?.hasHiddenExtension == true { labels.insert(url.deletingPathExtension().lastPathComponent) }
-                    for label in labels { entries[label, default: []].append(url) }
-                }
-            }
+            let index = FinderDisplayNameIndex.scan(directory: directory)
             if directoryCache.count >= 8 { directoryCache.removeAll(keepingCapacity: true) }
-            directoryCache[key] = NameCache(created: now, entries: entries)
+            directoryCache[key] = NameCache(created: now, index: index)
         }
-        for name in names {
-            if let matches = directoryCache[key]?.entries[name], matches.count == 1 { return matches[0] }
-        }
-        return nil
+        return directoryCache[key]?.index.uniqueURL(matchingAny: names)
     }
 
     private func isDirectory(_ url: URL) -> Bool {
