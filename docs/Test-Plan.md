@@ -12,6 +12,8 @@ Run `bash scripts/build-app.sh` on a Mac with Xcode Command Line Tools. This run
 
 The GitHub workflow tests and packages on macOS 14 and 15, with a separate Linux core job. macOS rendering tests export four real native UI snapshots when `HOOVER_SNAPSHOT_DIR` is set: dark hierarchy, light hierarchy, filtered ancestry, and a source-file HUD. Their temporary filesystem is real; the plain snapshot background is a test harness, not simulated Finder. Snapshots do not verify Accessibility item detection or interactive behavior.
 
+CI opts into native action tests using `HOOVER_NATIVE_ACTION_TESTS=1`: disposable test-owned files/folders move through real native Trash, then cleanup targets only the exact returned destination URL. Clipboard checks preserve accessible prior representations in memory. `HOOVER_LAUNCH_SMOKE_TEST=1` starts the packaged binary, checks its launch marker and process survival, and stops only that process. Local builds omit these explicit side-effect checks unless requested through those variables.
+
 Automated coverage includes dwell cancellation and blocked interactions, separate folder/file delays, dismissal suppression, two-step Escape, deep ancestry, multiple matches, ranking, Unicode normalization, root boundaries, exclusions, hidden/package options, symlink loops and root escapes, directory errors, cancellation, bounded lossless index streaming, text/configuration parsing, metadata read limits, note preservation, literal subprocess arguments, time/output limits, ZIP no-extraction behavior, native image/PDF metadata, settings defaults/clamping, and native view rendering.
 
 ## Required interactive macOS checks

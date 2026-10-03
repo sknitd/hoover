@@ -31,7 +31,8 @@ public enum TreeSearch {
         let queryKey = QueryKey(query)
 
         var matches: [SearchMatch] = []
-        for record in records {
+        // The immutable root labels the search scope; results are its subtree.
+        for record in records where record.depth > 0 {
             if let rank = rank(query: queryKey, record: record, fuzzy: fuzzy) {
                 matches.append(SearchMatch(record: record, rank: rank))
             }

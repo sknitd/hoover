@@ -16,8 +16,9 @@ Swift and module caches use writable locations under `/workspace`; no HOME overr
 | Final optimized core and bounded streaming | Independent PASS, **25 XCTest cases** | Adds a slow-consumer regression with 2,001 records delivered once each and a Unicode byte-matching/canonical-equivalence regression. |
 | Native Swift syntax | PASS in independent integrated recheck | Swift parser accepts native sources without loading Apple SDKs. Semantic/API validation requires macOS. |
 | Bundle metadata and shell syntax | PASS | `LSUIElement`, executable name, minimum macOS, valid plist data, `bash -n`, icon-script Swift parsing. |
-| Native metadata/settings/session/rendering tests | PENDING macOS, 23 tests authored | Test-only real file fixtures for ZIP, notes, subprocesses, text, images, PDF, settings, session restoration, and native view snapshots. |
+| Native metadata/settings/session/rendering/action tests | PENDING macOS, **27 tests authored** | Test-only real file fixtures for ZIP, notes, subprocesses, text, images, PDF, settings, session restoration, native view snapshots, actual recoverable Trash, and clipboard operations. |
 | Native release app build and signature verification | PENDING macOS | Universal Mach-O, Info.plist, `.icns`, resource bundle, ad-hoc/selected identity signing, signature validation, archive. Linux does not produce a pretend `.app`. |
+| Packaged application launch smoke | PENDING macOS CI | Launch the compiled app, require `applicationDidFinishLaunching` readiness marker and a running process, then stop only the test-launched process. This does not establish interactive Finder correctness. |
 | Interactive tests A–J | PENDING interactive Mac | Accessibility detection, actual Finder/default app opening, window placement, keyboard interception, Trash, Quick Look, and display behavior need a macOS desktop. |
 
 ## Large-tree evaluation and repair loop

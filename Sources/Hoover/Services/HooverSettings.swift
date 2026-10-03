@@ -159,21 +159,36 @@ final class HooverSettings: ObservableObject {
     }
 
     func isExcluded(_ url: URL) -> Bool {
-        let candidates = [url.standardizedFileURL.path, url.resolvingSymlinksInPath().standardizedFileURL.path]
+        exclusionPredicate()(url)
+    }
+
+    /// Captures preferences and canonical exclusion paths once; directory workers can evaluate off-main.
+    func exclusionPredicate() -> @Sendable (URL) -> Bool {
+        let excludeExternal = excludeExternalVolumes
+        let excludeNetwork = excludeNetworkVolumes
+        var prefixSet = Set<String>()
         for excluded in exclusions {
             let expanded = (excluded as NSString).expandingTildeInPath
             guard expanded.hasPrefix("/"), !expanded.isEmpty else { continue }
             let excludedURL = URL(fileURLWithPath: expanded).standardizedFileURL
-            let paths = [excludedURL.path, excludedURL.resolvingSymlinksInPath().path]
-            for prefix in paths {
-                if candidates.contains(where: { $0 == prefix || $0.hasPrefix(prefix == "/" ? "/" : prefix + "/") }) { return true }
+            prefixSet.insert(excludedURL.path)
+            prefixSet.insert(excludedURL.resolvingSymlinksInPath().standardizedFileURL.path)
+        }
+        let prefixes = Array(prefixSet)
+        guard !prefixes.isEmpty || excludeExternal || excludeNetwork else { return { _ in false } }
+        return { url in
+            if !prefixes.isEmpty {
+                let candidates = [url.standardizedFileURL.path, url.resolvingSymlinksInPath().standardizedFileURL.path]
+                for prefix in prefixes {
+                    if candidates.contains(where: { $0 == prefix || $0.hasPrefix(prefix == "/" ? "/" : prefix + "/") }) { return true }
+                }
             }
+            if excludeExternal || excludeNetwork,
+               let values = try? url.resourceValues(forKeys: [.volumeIsInternalKey, .volumeIsLocalKey]) {
+                if excludeNetwork && values.volumeIsLocal == false { return true }
+                if excludeExternal && values.volumeIsInternal == false && values.volumeIsLocal != false { return true }
+            }
+            return false
         }
-        if excludeExternalVolumes || excludeNetworkVolumes,
-           let values = try? url.resourceValues(forKeys: [.volumeIsInternalKey, .volumeIsLocalKey]) {
-            if excludeNetworkVolumes && values.volumeIsLocal == false { return true }
-            if excludeExternalVolumes && values.volumeIsInternal == false && values.volumeIsLocal != false { return true }
-        }
-        return false
     }
 }

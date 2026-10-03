@@ -74,13 +74,24 @@ enum TextMetadata {
         if partial { return [MetadataInspector.section("Configuration", [("Validity", "Not validated; file exceeds bounded text inspection limit.")])] }
         if ext == "json" || ext == "plist" {
             let parsed: Any?
-            if ext == "json" { parsed = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) }
+            var jsonStatistics: (keys: Int, depth: Int)?
+            if ext == "json" {
+                switch StrictJSON.validate(source) {
+                case .invalid:
+                    return [MetadataInspector.section("Configuration", [("Validity", "Invalid or unsupported encoding")])]
+                case .limited:
+                    return [MetadataInspector.section("Configuration", [("Validity", "Not validated; JSON nesting exceeds the 64-level inspection limit or inspection was cancelled.")])]
+                case .valid(let keys, let depth):
+                    jsonStatistics = (keys, depth)
+                }
+                parsed = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+            }
             else { parsed = try? PropertyListSerialization.propertyList(from: data, format: nil) }
             fields.append(("Validity", parsed == nil ? "Invalid or unsupported encoding" : "Valid"))
             if let parsed {
                 let keys = (parsed as? [String: Any])?.keys.sorted() ?? []
                 fields += [("Top-level keys", keys.prefix(30).joined(separator: ", ")),
-                           ("Key count", String(countKeys(parsed))), ("Nesting depth", String(depth(parsed)))]
+                           ("Key count", String(jsonStatistics?.keys ?? countKeys(parsed))), ("Nesting depth", String(jsonStatistics?.depth ?? depth(parsed)))]
             }
         } else if ext == "xml" {
             guard source.range(of: "<!DOCTYPE", options: .caseInsensitive) == nil else {

@@ -69,4 +69,15 @@ final class TreeSearchTests: XCTestCase {
         let korean = record("각.swift")
         XCTAssertEqual(TreeSearch.search(query: "각", records: [korean]).matches.first?.rank, 1)
     }
+
+    func testRootContextIsNotAResultButRemainsInDescendantAncestry() {
+        let root = record("", folder: true, depth: 0)
+        let ordinary = record("ordinary.txt", parent: "")
+        XCTAssertTrue(TreeSearch.search(query: "search-root", records: [root, ordinary]).matches.isEmpty)
+        let namedChild = record("search-root.md", parent: "")
+        let result = TreeSearch.search(query: "search-root", records: [root, ordinary, namedChild])
+        XCTAssertEqual(result.matches.map(\.record.node.id), [namedChild.node.id])
+        XCTAssertEqual(result.visibleIDs, [root.node.id, namedChild.node.id])
+        XCTAssertTrue(TreeSearch.search(query: "", records: [root, ordinary]).visibleIDs.contains(root.node.id))
+    }
 }

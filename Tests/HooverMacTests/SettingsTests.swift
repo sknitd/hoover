@@ -46,4 +46,27 @@ final class SettingsTests: XCTestCase {
         XCTAssertTrue(settings.isExcluded(link))
         XCTAssertFalse(settings.isExcluded(directory.appendingPathComponent("private-other/file.txt")))
     }
+
+    @MainActor
+    func testBackgroundExclusionPredicateCapturesAnImmutablePreferenceSnapshot() async throws {
+        let suite = "HooverExclusionSnapshotTests-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = HooverSettings(defaults: defaults)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let excluded = directory.appendingPathComponent("private", isDirectory: true)
+        try FileManager.default.createDirectory(at: excluded, withIntermediateDirectories: true)
+        let alias = directory.appendingPathComponent("alias", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: excluded)
+        settings.exclusions = [excluded.path]
+        let snapshot = settings.exclusionPredicate()
+        settings.exclusions = ["/"]
+        XCTAssertTrue(snapshot(excluded))
+        XCTAssertTrue(snapshot(excluded.appendingPathComponent("child.txt")))
+        XCTAssertTrue(snapshot(alias))
+        XCTAssertFalse(snapshot(directory.appendingPathComponent("private-other/file.txt")))
+        XCTAssertFalse(snapshot(directory.appendingPathComponent("normal.txt")), "Background work must retain the captured preferences")
+        XCTAssertTrue(settings.isExcluded(directory.appendingPathComponent("normal.txt")))
+    }
 }

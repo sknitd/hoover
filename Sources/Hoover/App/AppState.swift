@@ -79,7 +79,10 @@ final class AppState: ObservableObject {
         ) { [weak self] notification in
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   app.bundleIdentifier != "com.apple.finder", app.processIdentifier != getpid() else { return }
-            Task { @MainActor [weak self] in self?.dismiss() }
+            Task { @MainActor [weak self] in
+                guard let self, !self.actions.isOpening else { return }
+                self.dismiss()
+            }
         }
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -114,6 +117,7 @@ final class AppState: ObservableObject {
 
     private func observeFinder(_ observation: FinderObservation) {
         guard settings.enabled else { hoverMachine.reset(); return }
+        if actions.isOpening { hoverProgress = 0; return }
         if let source = sourceWindowID, let windows = observation.liveWindowIDs, !windows.contains(source) {
             dismiss()
             return
@@ -260,6 +264,7 @@ final class AppState: ObservableObject {
     private func loadColumn(parent: URL, level: Int) {
         let revision = sessionRevision
         let hidden = settings.includeHidden
+        let excluded = settings.exclusionPredicate()
         enumerationTasks[level]?.cancel()
         // Present a loading column before filesystem work, with no synchronous enumeration on the UI thread.
         columns.removeAll { $0.level >= level }
@@ -267,16 +272,15 @@ final class AppState: ObservableObject {
         if isSearchActive { normalColumns = columns }
         enumerationTasks[level] = Task { [weak self] in
             let result: Result<[FileNode], Error> = await Task.detached(priority: .userInitiated) {
-                Result { try DirectoryReader.contents(of: parent, includeHidden: hidden) }
+                Result { try DirectoryReader.contents(of: parent, includeHidden: hidden).filter { !excluded($0.url) } }
             }.value
             guard !Task.isCancelled, let self, self.sessionRevision == revision else { return }
             var destination = self.isSearchActive ? self.normalColumns : self.columns
             guard let destinationIndex = destination.firstIndex(where: { $0.level == level && $0.parentURL == parent }) else { return }
             switch result {
             case .success(let nodes):
-                let visible = nodes.filter { !self.settings.isExcluded($0.url) }
                 destination[destinationIndex] =
-                    TreeColumn(parentURL: parent, level: level, items: visible)
+                    TreeColumn(parentURL: parent, level: level, items: nodes)
             case .failure(let error):
                 destination[destinationIndex] =
                     TreeColumn(parentURL: parent, level: level, items: [], error: error.localizedDescription)
@@ -429,19 +433,20 @@ final class AppState: ObservableObject {
         refreshTask?.cancel()
         let revision = sessionRevision
         let hidden = settings.includeHidden
+        let excluded = settings.exclusionPredicate()
         let source = isSearchActive ? normalColumns : columns
         refreshTask = Task { [weak self] in
             var updated: [TreeColumn] = []
             for column in source {
                 guard FileManager.default.fileExists(atPath: column.parentURL.path) else { break }
                 let result = await Task.detached(priority: .utility) {
-                    Result { try DirectoryReader.contents(of: column.parentURL, includeHidden: hidden) }
+                    Result { try DirectoryReader.contents(of: column.parentURL, includeHidden: hidden).filter { !excluded($0.url) } }
                 }.value
                 guard !Task.isCancelled, let self, self.sessionRevision == revision else { return }
                 switch result {
                 case .success(let nodes):
                     updated.append(TreeColumn(parentURL: column.parentURL, level: column.level,
-                                              items: nodes.filter { !self.settings.isExcluded($0.url) }))
+                                              items: nodes))
                 case .failure(let error):
                     updated.append(TreeColumn(parentURL: column.parentURL, level: column.level,
                                               items: [], error: error.localizedDescription))

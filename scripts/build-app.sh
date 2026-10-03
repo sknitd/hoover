@@ -25,7 +25,9 @@ trap cleanup EXIT
 command -v swift >/dev/null
 xcrun --find swift >/dev/null
 swift --version
-swift test --parallel
+# Serial XCTest output preserves the exact total and skipped counts for native
+# evaluation. The build remains parallel; these small tests take only seconds.
+swift test
 
 # On hosted macOS runners both architectures can be built against the macOS SDK.
 # Set HOOVER_ARCHS to the current architecture for a quicker local iteration.
@@ -53,16 +55,18 @@ plutil -lint "$work_dir/Hoover.app/Contents/Info.plist"
 xcrun swift scripts/generate-icon.swift "$work_dir/Hoover.iconset"
 iconutil --convert icns "$work_dir/Hoover.iconset" --output "$work_dir/Hoover.app/Contents/Resources/Hoover.icns"
 
-# Keep SwiftPM resources available to its generated Bundle.module accessor.
-# Bundle.main.bundleURL resolves to the .app on macOS, hence the root location.
+# App code does not use SwiftPM's generated Bundle.module build-path accessor.
+# Keep bundled data in standard macOS Contents/Resources; future runtime lookups
+# should use Bundle.main.resourceURL. Only Contents belongs at the app root.
 for bundle in "${resource_dirs[0]}"/*.bundle; do
   [[ -d "$bundle" ]] || continue
-  cp -R "$bundle" "$work_dir/Hoover.app/"
+  cp -R "$bundle" "$work_dir/Hoover.app/Contents/Resources/"
 done
 
 signing_identity="${HOOVER_SIGNING_IDENTITY:--}"
 codesign --force --options runtime --entitlements Sources/Hoover/Resources/Hoover.entitlements --sign "$signing_identity" "$work_dir/Hoover.app"
 codesign --verify --deep --strict --verbose=2 "$work_dir/Hoover.app"
+echo "Native code signature verification passed."
 file "$work_dir/Hoover.app/Contents/MacOS/Hoover"
 lipo -info "$work_dir/Hoover.app/Contents/MacOS/Hoover"
 

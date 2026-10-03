@@ -18,5 +18,19 @@ if [[ "$result" -ne 0 ]]; then
     line=${line//$'\n'/'%0A'}
     echo "::error title=Hoover validation::$line"
   done <<< "$matches"
+else
+  summaries="$(awk '/Executed [0-9]+ tests?,/ {last=$0} END {if (last != "") print last}' "$log")"
+  if [[ -z "$summaries" ]]; then
+    summaries="$(awk '/^\[[0-9]+\/[0-9]+\] Testing/ {last=$0} END {if (last != "") print "Parallel XCTest runner completed successfully; final scheduled case: " last}' "$log")"
+  fi
+  markers="$(awk '/Native code signature verification passed|Native launch smoke passed|Architectures in the fat file|Built .*Hoover.app|Bundle metadata validated/ {print}' "$log")"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    line=${line//'%'/'%25'}
+    line=${line//$'\r'/'%0D'}
+    line=${line//$'\n'/'%0A'}
+    echo "::notice title=Hoover results::$line"
+  done <<< "$summaries
+$markers"
 fi
 exit "$result"

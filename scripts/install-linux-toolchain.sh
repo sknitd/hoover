@@ -6,11 +6,16 @@ set -euo pipefail
 
 toolchain_root="${HOOVER_TOOLCHAIN_ROOT:-/workspace/toolchains}"
 toolchain_dir="$toolchain_root/swift"
-if [[ -x "$toolchain_dir/usr/bin/swift" ]] && "$toolchain_dir/usr/bin/swift" --version | head -n 1 | grep -q 'Swift version 6.1.3'; then
+verification_marker="$toolchain_dir/.hoover-verified-swift-6.1.3"
+signer_fingerprint='52BB7E3DE28A71BE22EC05FFEF80A866B47A981F'
+if [[ -x "$toolchain_dir/usr/bin/swift" && -f "$verification_marker" ]] &&
+   [[ "$(head -n 1 "$verification_marker")" == "$signer_fingerprint" ]] &&
+   [[ "$(tail -n 1 "$verification_marker")" == "$(sha256sum "$toolchain_dir/usr/bin/swift-frontend" | awk '{print $1}')" ]] &&
+   "$toolchain_dir/usr/bin/swift" --version | head -n 1 | grep -q 'Swift version 6.1.3'; then
   echo "Swift 6.1.3 already installed at $toolchain_dir"
   exit 0
 fi
-for command in curl gpg tar; do command -v "$command" >/dev/null; done
+for command in curl gpg tar sha256sum; do command -v "$command" >/dev/null; done
 mkdir -p "$toolchain_root/downloads"
 work_dir="$(mktemp -d "$toolchain_root/verify-swift.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
@@ -28,6 +33,7 @@ awk '$1 == "[GNUPG:]" && $2 == "VALIDSIG" && $3 == "52BB7E3DE28A71BE22EC05FFEF80
 mkdir "$work_dir/toolchain"
 tar -xzf "$archive" --strip-components=1 -C "$work_dir/toolchain"
 "$work_dir/toolchain/usr/bin/swift" --version
+printf '%s\n' "$signer_fingerprint" "$(sha256sum "$work_dir/toolchain/usr/bin/swift-frontend" | awk '{print $1}')" > "$work_dir/toolchain/.hoover-verified-swift-6.1.3"
 [[ ! -e "$toolchain_dir" ]] || { echo "Refusing to overwrite an existing different toolchain: $toolchain_dir" >&2; exit 1; }
 mv "$work_dir/toolchain" "$toolchain_dir"
 echo "Verified Swift installed at $toolchain_dir"

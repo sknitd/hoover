@@ -13,6 +13,8 @@ final class FileActions: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     var onTrashed: ((URL, URL?) -> Void)?
     private let settings: HooverSettings
     private var previewURL: URL?
+    private var pendingOpenActions = 0
+    private(set) var isOpening = false
     var hasPreview: Bool { previewURL != nil }
 
     init(settings: HooverSettings) {
@@ -187,12 +189,15 @@ final class FileActions: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     private func open(_ node: FileNode, using application: URL) {
+        beginOpening()
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         NSWorkspace.shared.open([node.url], withApplicationAt: application, configuration: configuration) { [weak self] _, error in
             Task { @MainActor in
-                if let error { self?.onError?(error.localizedDescription) }
-                else { self?.onDismiss?() }
+                guard let self else { return }
+                defer { self.endOpening() }
+                if let error { self.onError?(error.localizedDescription) }
+                else { self.onDismiss?() }
             }
         }
     }
@@ -209,7 +214,10 @@ final class FileActions: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     private func runFinderScript(_ script: String, path: String, dismissOnSuccess: Bool) {
+        beginOpening()
         Task { [weak self] in
+            guard let self else { return }
+            defer { self.endOpening() }
             let failure = await Task.detached(priority: .userInitiated) { () -> String? in
                 // Allow time for the first system Automation consent dialog, while bounding a stuck Finder.
                 guard let result = InspectionProcess.run("/usr/bin/osascript", ["-e", script, path], timeout: 45, limit: 16_384) else {
@@ -223,9 +231,19 @@ final class FileActions: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 let message = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
                 return message.isEmpty ? "Finder could not complete this action." : message
             }.value
-            if let failure { self?.onError?(failure) }
-            else if dismissOnSuccess { self?.onDismiss?() }
+            if let failure { self.onError?(failure) }
+            else if dismissOnSuccess { self.onDismiss?() }
         }
+    }
+
+    private func beginOpening() {
+        pendingOpenActions += 1
+        isOpening = true
+    }
+
+    private func endOpening() {
+        pendingOpenActions = max(0, pendingOpenActions - 1)
+        isOpening = pendingOpenActions != 0
     }
 }
 

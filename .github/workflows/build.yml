@@ -28,6 +28,7 @@ jobs:
           path: dist/Hoover-macOS.zip
           if-no-files-found: error
       - name: Upload native UI evaluation snapshots
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Hoover-UI-${{ matrix.os }}

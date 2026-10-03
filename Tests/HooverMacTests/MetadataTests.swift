@@ -46,6 +46,33 @@ final class MetadataTests: XCTestCase {
         XCTAssertNil(value(result.sections, "Key count"))
     }
 
+    func testJSONRejectsNonstandardLiteralsNumbersAndTrailingContent() throws {
+        let malformed = [#"{"number":NaN}"#, #"{"number":0x10}"#,
+                         #"{"enabled":true} false"#, #"[1,2,]"#,
+                         #"{"text":"\q"}"#, #"{"number":01}"#]
+        for (index, source) in malformed.enumerated() {
+            let result = TextMetadata.inspect(try file("invalid-\(index).json", source), size: Int64(source.utf8.count))
+            XCTAssertEqual(value(result.sections, "Validity"), "Invalid or unsupported encoding", source)
+            XCTAssertNil(value(result.sections, "Key count"), source)
+        }
+    }
+
+    func testJSONAcceptsEscapesFractionsAndNestedStatistics() throws {
+        let source = #"[{"title":"Hover \"deeper\" \u263A","value":-1.25e+2},null,true]"#
+        let result = TextMetadata.inspect(try file("strict-valid.json", source), size: Int64(source.utf8.count))
+        XCTAssertEqual(value(result.sections, "Validity"), "Valid")
+        XCTAssertEqual(value(result.sections, "Key count"), "2")
+        XCTAssertEqual(value(result.sections, "Nesting depth"), "2")
+    }
+
+    func testJSONOverInspectionDepthIsReportedAsUnvalidated() throws {
+        let source = String(repeating: "[", count: 65) + "0" + String(repeating: "]", count: 65)
+        let result = TextMetadata.inspect(try file("too-deep.json", source), size: Int64(source.utf8.count))
+        XCTAssertTrue(value(result.sections, "Validity")?.contains("64-level inspection limit") == true)
+        XCTAssertNil(value(result.sections, "Key count"))
+        XCTAssertNil(value(result.sections, "Nesting depth"))
+    }
+
     func testBinaryPlistIsValidatedWithoutPretendingItIsText() throws {
         let url = directory.appendingPathComponent("Preferences.plist")
         let data = try PropertyListSerialization.data(fromPropertyList: ["active": true, "delay": 3], format: .binary, options: 0)
