@@ -12,7 +12,15 @@ cd "$repo_dir"
 dist_dir="${HOOVER_DIST_DIR:-$repo_dir/dist}"
 app_dir="$dist_dir/Hoover.app"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/hoover-build.XXXXXX")"
-trap 'rm -rf "$work_dir"' EXIT
+smoke_pid=""
+cleanup() {
+  if [[ -n "$smoke_pid" ]]; then
+    kill "$smoke_pid" 2>/dev/null || true
+    wait "$smoke_pid" 2>/dev/null || true
+  fi
+  rm -rf "$work_dir"
+}
+trap cleanup EXIT
 
 command -v swift >/dev/null
 xcrun --find swift >/dev/null
@@ -64,6 +72,27 @@ if [[ -e "$app_dir" ]]; then
   rm -rf "$app_dir"
 fi
 mv "$work_dir/Hoover.app" "$app_dir"
+if [[ "${HOOVER_LAUNCH_SMOKE_TEST:-0}" == 1 ]]; then
+  mkdir -p "$dist_dir/build-results"
+  launch_log="$dist_dir/build-results/launch.log"
+  "$app_dir/Contents/MacOS/Hoover" > "$launch_log" 2>&1 &
+  smoke_pid=$!
+  sleep 2
+  if ! kill -0 "$smoke_pid" 2>/dev/null; then
+    echo "error: Packaged Hoover exited during native launch smoke." >&2
+    cat "$launch_log" >&2
+    exit 1
+  fi
+  if ! /usr/bin/grep -q 'Hoover native launch completed' "$launch_log"; then
+    echo "error: Packaged Hoover did not report applicationDidFinishLaunching during native launch smoke." >&2
+    cat "$launch_log" >&2
+    exit 1
+  fi
+  kill "$smoke_pid"
+  wait "$smoke_pid" 2>/dev/null || true
+  smoke_pid=""
+  echo "Native launch smoke passed: compiled app completed launch and remained running."
+fi
 ditto -c -k --keepParent "$app_dir" "$dist_dir/Hoover-macOS.zip"
 echo "Built $app_dir"
 echo "Archive: $dist_dir/Hoover-macOS.zip"

@@ -9,6 +9,8 @@ final class FileActions: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     var onDismiss: (() -> Void)?
     var onChanged: ((URL) -> Void)?
     var onError: ((String) -> Void)?
+    // Exposes the exact native destination for observers and safe test cleanup.
+    var onTrashed: ((URL, URL?) -> Void)?
     private let settings: HooverSettings
     private var previewURL: URL?
     var hasPreview: Bool { previewURL != nil }
@@ -121,6 +123,7 @@ final class FileActions: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         do {
             var trashedURL: NSURL?
             try FileManager.default.trashItem(at: node.url, resultingItemURL: &trashedURL)
+            onTrashed?(node.url, trashedURL as URL?)
             onChanged?(node.url)
         } catch {
             onError?("Could not move “\(node.name)” to the Bin. \(error.localizedDescription)")

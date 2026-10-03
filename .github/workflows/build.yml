@@ -19,6 +19,8 @@ jobs:
         run: bash scripts/ci-build.sh bash scripts/build-app.sh
         env:
           HOOVER_SNAPSHOT_DIR: ${{ github.workspace }}/dist/evaluation-snapshots
+          HOOVER_NATIVE_ACTION_TESTS: '1'
+          HOOVER_LAUNCH_SMOKE_TEST: '1'
       - name: Upload compiled universal macOS app
         uses: actions/upload-artifact@v4
         with:

@@ -6,6 +6,8 @@ The evaluator follows requirements → build/tests → findings → repair → r
 
 Run `bash scripts/check-source.sh` with Swift on PATH. On Linux this runs the portable core tests and parses native Swift syntax; it cannot type-check Apple frameworks. On macOS it also builds the native executable.
 
+Run `bash scripts/stress-core.sh` for the optional large-tree core evaluation. It compiles optimized real core sources, creates 100,000 temporary real files, verifies record and match/ancestry counts, prints indexing/query timings, and removes its fixtures. This is a developer test script, not a user-facing application mode.
+
 Run `bash scripts/build-app.sh` on a Mac with Xcode Command Line Tools. This runs all portable and macOS tests, builds arm64 and x86_64 release executables, creates the icon, assembles the real app, signs it, verifies the signature, checks executable architecture, and writes `dist/Hoover-macOS.zip`. Set `HOOVER_ARCHS="$(uname -m)"` for a quicker development build. Signing is ad hoc unless `HOOVER_SIGNING_IDENTITY` selects an installed signing identity. Distribution notarization requires the developer's signing credentials and is separate from local builds.
 
 The GitHub workflow tests and packages on macOS 14 and 15, with a separate Linux core job. macOS rendering tests export four real native UI snapshots when `HOOVER_SNAPSHOT_DIR` is set: dark hierarchy, light hierarchy, filtered ancestry, and a source-file HUD. Their temporary filesystem is real; the plain snapshot background is a test harness, not simulated Finder. Snapshots do not verify Accessibility item detection or interactive behavior.

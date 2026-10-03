@@ -13,10 +13,10 @@ Swift and module caches use writable locations under `/workspace`; no HOME overr
 | Check | Result | Scope |
 | --- | --- | --- |
 | Portable unit tests, initial independent run | PASS, 23 XCTest cases | Hover timers/suppression, Escape, filesystem enumeration, root-confined search, ranking, exclusions, hidden/packages, deep nesting, symlink loops/escapes, cancellation. |
-| Bounded streaming follow-up | Agent PASS, 24 XCTest cases; independent recheck pending final integration | Adds a slow-consumer regression with 2,001 records delivered once each and no lost batches. |
-| Native Swift syntax | PASS before final integration; final recheck pending | Swift parser accepts native sources without loading Apple SDKs. Semantic/API validation requires macOS. |
+| Final optimized core and bounded streaming | Independent PASS, **25 XCTest cases** | Adds a slow-consumer regression with 2,001 records delivered once each and a Unicode byte-matching/canonical-equivalence regression. |
+| Native Swift syntax | PASS in independent integrated recheck | Swift parser accepts native sources without loading Apple SDKs. Semantic/API validation requires macOS. |
 | Bundle metadata and shell syntax | PASS | `LSUIElement`, executable name, minimum macOS, valid plist data, `bash -n`, icon-script Swift parsing. |
-| Native metadata/settings/rendering tests | PENDING macOS | Test-only real file fixtures for ZIP, notes, subprocesses, text, images, PDF, settings, and native view snapshots. |
+| Native metadata/settings/session/rendering tests | PENDING macOS, 23 tests authored | Test-only real file fixtures for ZIP, notes, subprocesses, text, images, PDF, settings, session restoration, and native view snapshots. |
 | Native release app build and signature verification | PENDING macOS | Universal Mach-O, Info.plist, `.icns`, resource bundle, ad-hoc/selected identity signing, signature validation, archive. Linux does not produce a pretend `.app`. |
 | Interactive tests A–J | PENDING interactive Mac | Accessibility detection, actual Finder/default app opening, window placement, keyboard interception, Trash, Quick Look, and display behavior need a macOS desktop. |
 
@@ -24,7 +24,9 @@ Swift and module caches use writable locations under `/workspace`; no HOME overr
 
 An optimized standalone executable compiled the real `HooverCore` sources and created **100,000 actual empty files** in 100 directories. All fixtures were removed after testing. The first measurement indexed all 100,101 records in 4.607 seconds across 784 batches; first batch arrived in 1.3 ms. A precise filename produced one match with exactly its three required ancestry IDs; the extension query matched all 100,000 files.
 
-The first name-query timings were 0.59–0.66 seconds, and the broad extension query took 2.97 seconds. Those timings did not satisfy the intended immediate live response at that size. Evaluation requested cached node identities, cheaper stable ranking comparisons, fewer repeated ancestry walks, and avoiding unnecessary map creation. Final optimized measurements and macOS UI measurements are pending; no interactive responsiveness claim is made from this Linux stress test.
+The first name-query timings were 0.59–0.66 seconds, and the broad extension query took 2.97 seconds. Those timings did not satisfy the intended immediate live response at that size. Evaluation requested cached node identities, cheaper stable ranking comparisons, fewer repeated ancestry walks, and avoiding unnecessary map creation. The implementation now also uses NFC-normalized UTF-8 matching and builds only directory ancestry maps. Column preparation and sorting occur off the main actor.
+
+An independent final optimized rerun indexed all 100,101 records in **4.533 seconds**, with the first batch at **2.3 ms**. Precise filename filtering took **18 ms**; no-match and folder queries each took **17 ms**; an extension query returning 100,000 matches took **142 ms**. Exact match counts and complete ancestry passed. These are Linux core timings; macOS interactive rendering and peak-memory measurements remain pending. Reproduce the evaluation with `bash scripts/stress-core.sh`.
 
 ## Findings repaired during review
 

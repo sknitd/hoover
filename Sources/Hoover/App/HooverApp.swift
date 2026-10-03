@@ -50,6 +50,9 @@ final class HooverAppDelegate: NSResponder, NSApplicationDelegate, NSMenuDelegat
             self?.statusItem?.button?.toolTip = root == nil ? "Hoover — Hover deeper. See everything." : "Hoover — Folder X-Ray active"
         }.store(in: &subscriptions)
         if !state.tracker.permissionGranted { showPermissionWindow() }
+        if ProcessInfo.processInfo.environment["HOOVER_LAUNCH_SMOKE_TEST"] == "1" {
+            NSLog("Hoover native launch completed")
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) { state.stop() }

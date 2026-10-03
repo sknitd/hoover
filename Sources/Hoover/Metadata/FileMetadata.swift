@@ -21,7 +21,19 @@ struct MetadataSection: Identifiable, Sendable {
     init(id: String? = nil, title: String, fields: [MetadataField]) {
         self.id = id ?? title
         self.title = title
-        self.fields = fields
+        // Native metadata can repeat a label for different tracks/locales.
+        // Preserve every value while giving SwiftUI a unique, deterministic identity.
+        var identities = Set<String>()
+        self.fields = fields.map { field in
+            var candidate = field.id
+            var suffix = 1
+            while identities.contains(candidate) {
+                candidate = "\(field.id)#\(suffix)"
+                suffix += 1
+            }
+            identities.insert(candidate)
+            return candidate == field.id ? field : MetadataField(id: candidate, label: field.label, value: field.value)
+        }
     }
 }
 

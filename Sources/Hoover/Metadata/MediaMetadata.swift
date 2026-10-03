@@ -113,12 +113,14 @@ enum MediaMetadata {
                 if let bitrate = try? await track.load(.estimatedDataRate), bitrate > 0 { fields.append(("Video bitrate", bitrateString(bitrate))) }
                 if let formats = try? await track.load(.formatDescriptions), let format = formats.first {
                     fields.append(("Video codec", fourCC(CMFormatDescriptionGetMediaSubType(format))))
-                    let extensions = CMFormatDescriptionGetExtensions(format) as NSDictionary
-                    if let transfer = extensions["TransferFunction"] as? String {
-                        if transfer.contains("2084") { fields.append(("HDR transfer", "PQ / SMPTE ST 2084")) }
-                        else if transfer.localizedCaseInsensitiveContains("HLG") || transfer.contains("2100") { fields.append(("HDR transfer", "HLG")) }
+                    if let formatExtensions = CMFormatDescriptionGetExtensions(format) {
+                        let extensions = formatExtensions as NSDictionary
+                        if let transfer = extensions["TransferFunction"] as? String {
+                            if transfer.contains("2084") { fields.append(("HDR transfer", "PQ / SMPTE ST 2084")) }
+                            else if transfer.localizedCaseInsensitiveContains("HLG") || transfer.contains("2100") { fields.append(("HDR transfer", "HLG")) }
+                        }
+                        if let atoms = extensions["SampleDescriptionExtensionAtoms"] as? [String: Any], atoms["dvcC"] != nil || atoms["dvvC"] != nil { fields.append(("HDR format", "Dolby Vision configuration")) }
                     }
-                    if let atoms = extensions["SampleDescriptionExtensionAtoms"] as? [String: Any], atoms["dvcC"] != nil || atoms["dvvC"] != nil { fields.append(("HDR format", "Dolby Vision configuration")) }
                 }
             }
             for track in audio.prefix(1) {

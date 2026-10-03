@@ -105,6 +105,17 @@ final class MetadataTests: XCTestCase {
         XCTAssertEqual(MetadataInspector.redactCredentials("https://user:pass@example.org/file.pdf"), "https://example.org/file.pdf")
     }
 
+    func testMetadataFieldIdentitiesAreUniqueAndStableWhenLabelsRepeat() {
+        let fields = [MetadataField(label: "Title", value: "English"),
+                      MetadataField(label: "Title", value: "Français"),
+                      MetadataField(id: "Title#1", label: "Artist", value: "Ada")]
+        let first = MetadataSection(title: "Audio", fields: fields)
+        let second = MetadataSection(title: "Audio", fields: fields)
+        XCTAssertEqual(Set(first.fields.map(\.id)).count, fields.count)
+        XCTAssertEqual(first.fields.map(\.id), second.fields.map(\.id))
+        XCTAssertEqual(first.fields.map(\.value), ["English", "Français", "Ada"])
+    }
+
     func testSubprocessArgumentsArePassedLiterally() throws {
         let text = "$(touch /tmp/hoover-should-not-exist); `id`; quote ' \" café"
         let result = try XCTUnwrap(InspectionProcess.run("/usr/bin/printf", ["%s", text]))
