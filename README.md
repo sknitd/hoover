@@ -24,13 +24,15 @@ The script runs tests, builds both Apple Silicon and Intel binaries, creates a u
 
 An ad-hoc signature is for local use. Developer ID signing and notarization for distribution require the developer's Apple identity; the build accepts `HOOVER_SIGNING_IDENTITY` but does not embed credentials or impersonate a Developer ID.
 
-GitHub Actions also builds, tests, and uploads the application on macOS 14 and 15. [Download the verified universal app](https://github.com/sknitd/hoover/actions/runs/37150538584/artifacts/11283443214) from the [successful native workflow](https://github.com/sknitd/hoover/actions/runs/37150538584). Unzip the downloaded artifact, then unzip its `Hoover-macOS.zip` to obtain `Hoover.app`. Both native jobs passed 57 tests, signature verification, and a launch smoke check; live Finder and visual checks remain listed in the test plan.
+GitHub Actions also builds, tests, and uploads the application on macOS 14 and 15. [Download the verified universal app, version 1.0.1](https://github.com/sknitd/hoover/actions/runs/37152048440/artifacts/11283914682) from the [successful native workflow](https://github.com/sknitd/hoover/actions/runs/37152048440). Unzip the downloaded artifact, then unzip its `Hoover-macOS.zip` to obtain `Hoover.app`. Both native jobs passed 66 tests, signature verification, and a launch smoke check; live Finder and visual checks remain listed in the test plan.
 
 ## First launch
 
 Launch Hoover, then enable it in **System Settings → Privacy & Security → Accessibility**. This allows the app to identify the Finder item beneath the pointer. The permission window explains why access is needed. Hoover normally appears only in the menu bar.
 
 Hover a real Finder folder for three seconds; hover any inner folder briefly to expand the next level. Press **⌘F** or click Search to filter only that root's subtree. The first **Esc** restores the tree; the second closes the session. **Space** opens native Quick Look. **Return** opens the focused item.
+
+A visible Finder item can trigger Hoover while another app remains foreground, without first clicking Finder. Closing the permission window also resumes hover detection when Hoover remains foreground with no key window. Foreground Hoover settings/modal windows suppress new hover activation.
 
 Double-click a file to open its default application. Double-click a folder to create a **new Finder window** at that folder. Successful opening dismisses Hoover's HUD. Packages such as `.app` and `.xcodeproj` open with their default applications.
 
