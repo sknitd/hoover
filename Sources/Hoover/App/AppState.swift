@@ -49,10 +49,13 @@ final class AppState: ObservableObject {
     private var lastIndexSearchTime = 0.0
     private var sourceWindowID: Int?
     private var fileAnchor: CGRect = .zero
+    private let monotonicTime: () -> TimeInterval
     lazy var overlay = OverlayController(state: self)
 
-    init(settings: HooverSettings) {
+    init(settings: HooverSettings,
+         monotonicTime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.settings = settings
+        self.monotonicTime = monotonicTime
         actions = FileActions(settings: settings)
         actions.onDismiss = { [weak self] in self?.dismiss(restoreFinder: false) }
         actions.onChanged = { [weak self] _ in self?.refresh() }
@@ -115,7 +118,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func observeFinder(_ observation: FinderObservation) {
+    func observeFinder(_ observation: FinderObservation) {
         guard settings.enabled else { hoverMachine.reset(); return }
         if actions.isOpening { setHoverProgress(0); return }
         if let source = sourceWindowID, let windows = observation.liveWindowIDs, !windows.contains(source) {
@@ -124,7 +127,7 @@ final class AppState: ObservableObject {
         }
         // Moving from Finder into Hoover must not count as leaving the item.
         if overlay.isVisible && overlay.containsPointer { setHoverProgress(0); return }
-        if !observation.finderActive {
+        if !observation.finderActive && !observation.pointerOverFinder {
             let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
             if frontmost == getpid(), overlay.isVisible { return }
             dismiss()
@@ -147,7 +150,7 @@ final class AppState: ObservableObject {
             || (!value.isDirectory && !settings.fileEnabled) { node = nil }
         hoverMachine.folderDelay = settings.folderDelay
         hoverMachine.fileDelay = settings.fileDelay
-        let action = hoverMachine.update(node: node, timestamp: ProcessInfo.processInfo.systemUptime,
+        let action = hoverMachine.update(node: node, timestamp: monotonicTime(),
                                          blocked: observation.blocked)
         setHoverProgress(settings.showCountdown ? hoverMachine.progress : 0)
         switch action {

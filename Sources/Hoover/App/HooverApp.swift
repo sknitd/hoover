@@ -151,7 +151,8 @@ final class HooverAppDelegate: NSResponder, NSApplicationDelegate, NSMenuDelegat
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Hoover"
-        alert.informativeText = "Hover deeper. See everything.\n\nFolder X-Ray and rich file metadata, directly above Finder.\n\nAll indexing and previews stay on this Mac.\nVersion 1.0.0\n\nFinder tracking inspired by KoukeNeko/FinderHover (MIT)."
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development"
+        alert.informativeText = "Hover deeper. See everything.\n\nFolder X-Ray and rich file metadata, directly above Finder.\n\nAll indexing and previews stay on this Mac.\nVersion \(version)\n\nFinder tracking inspired by KoukeNeko/FinderHover (MIT)."
         alert.addButton(withTitle: "Done")
         alert.runModal()
     }

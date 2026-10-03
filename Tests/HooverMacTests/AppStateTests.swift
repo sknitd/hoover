@@ -6,6 +6,98 @@ import XCTest
 
 final class AppStateTests: XCTestCase {
     @MainActor
+    func testVerifiedBackgroundFinderHoverOpensRealFolderAfterFullDwell() async throws {
+        var timestamp: TimeInterval = 100
+        let (state, defaults, suite) = try makeState(monotonicTime: { timestamp })
+        let root = try makeFolderFixture()
+        defer {
+            state.dismiss(restoreFinder: false)
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let observation = backgroundFolderObservation(root, verified: true)
+        XCTAssertEqual(state.settings.folderDelay, 3)
+
+        state.observeFinder(observation)
+        timestamp = 102.999
+        state.observeFinder(observation)
+        XCTAssertNil(state.rootURL, "A background Finder item must still receive the full folder dwell.")
+        XCTAssertFalse(state.overlay.isVisible)
+
+        timestamp = 103
+        state.observeFinder(observation)
+        XCTAssertEqual(state.rootURL, root.standardizedFileURL)
+        XCTAssertTrue(state.overlay.isVisible, "Verified pointer ownership permits no-click hovering over background Finder.")
+
+        // Enumeration is real and asynchronous; allow it to finish without
+        // starting the Accessibility tracker or waiting through a real dwell.
+        for _ in 0..<100 {
+            if state.columns.first?.isLoading == false { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        let first = try XCTUnwrap(state.columns.first)
+        XCTAssertEqual(first.parentURL, root.standardizedFileURL)
+        XCTAssertEqual(first.level, 1)
+        XCTAssertFalse(first.isLoading)
+        XCTAssertNil(first.error)
+        XCTAssertEqual(Set(first.items.map(\.name)), ["README.md", "Sources"])
+    }
+
+    @MainActor
+    func testUnverifiedBackgroundFinderObservationNeverOpensFolder() throws {
+        var timestamp: TimeInterval = 100
+        let (state, defaults, suite) = try makeState(monotonicTime: { timestamp })
+        let root = try makeFolderFixture()
+        defer {
+            state.dismiss(restoreFinder: false)
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let observation = backgroundFolderObservation(root, verified: false)
+
+        for time in [100.0, 103.0, 200.0] {
+            timestamp = time
+            state.observeFinder(observation)
+            XCTAssertNil(state.rootURL, "A stale item without foreground Finder or verified pointer ownership cannot activate.")
+            XCTAssertFalse(state.overlay.isVisible)
+            XCTAssertTrue(state.columns.isEmpty)
+        }
+    }
+
+    @MainActor
+    func testBlockedBackgroundFinderHoverRequiresFreshFullDwell() throws {
+        var timestamp: TimeInterval = 100
+        let (state, defaults, suite) = try makeState(monotonicTime: { timestamp })
+        let root = try makeFolderFixture()
+        defer {
+            state.dismiss(restoreFinder: false)
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let observation = backgroundFolderObservation(root, verified: true)
+        state.observeFinder(observation)
+        timestamp = 102
+        state.observeFinder(backgroundFolderObservation(root, verified: true, blocked: true))
+        XCTAssertNil(state.rootURL)
+        XCTAssertFalse(state.overlay.isVisible)
+
+        // The first unblocked observation begins a new dwell. Time accumulated
+        // before or during the blocked interaction must not activate the HUD.
+        timestamp = 105
+        state.observeFinder(observation)
+        XCTAssertNil(state.rootURL)
+        timestamp = 107.999
+        state.observeFinder(observation)
+        XCTAssertNil(state.rootURL)
+        XCTAssertFalse(state.overlay.isVisible)
+
+        timestamp = 108
+        state.observeFinder(observation)
+        XCTAssertEqual(state.rootURL, root.standardizedFileURL)
+        XCTAssertTrue(state.overlay.isVisible)
+    }
+
+    @MainActor
     func testFirstEscapeRestoresBrowsingContextAndSecondEscapeDismisses() async throws {
         let (state, defaults, suite) = try makeState()
         defer {
@@ -137,13 +229,29 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
-    private func makeState() throws -> (AppState, UserDefaults, String) {
+    private func makeState(monotonicTime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) throws -> (AppState, UserDefaults, String) {
         // AppState's lazy overlay may instantiate an NSPanel during dismissal.
         // No tracker is started and no macOS permission prompt is requested.
         _ = NSApplication.shared
         let suite = "HooverAppStateTests-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        return (AppState(settings: HooverSettings(defaults: defaults)), defaults, suite)
+        return (AppState(settings: HooverSettings(defaults: defaults), monotonicTime: monotonicTime), defaults, suite)
+    }
+
+    private func makeFolderFixture() throws -> URL {
+        let root = temporaryRoot()
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("Sources", isDirectory: true),
+                                                withIntermediateDirectories: true)
+        try Data("A real coordinator test fixture.\n".utf8).write(to: root.appendingPathComponent("README.md"))
+        return root
+    }
+
+    private func backgroundFolderObservation(_ root: URL, verified: Bool, blocked: Bool = false) -> FinderObservation {
+        let bounds = CGRect(x: 40, y: 40, width: 220, height: 24)
+        return FinderObservation(node: FileNode(url: root, isDirectory: true), bounds: bounds,
+                                 blocked: blocked, finderActive: false,
+                                 pointer: CGPoint(x: bounds.midX, y: bounds.midY),
+                                 pointerOverFinder: verified)
     }
 
     private func temporaryRoot() -> URL {

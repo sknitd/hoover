@@ -14,6 +14,8 @@ struct FinderObservation {
     var sourceWindowID: Int? = nil
     /// Nil means the window snapshot was unavailable or incomplete, not empty.
     var liveWindowIDs: Set<Int>? = nil
+    /// True only after AX hit testing verifies Finder owns the element under the pointer.
+    var pointerOverFinder = false
 }
 
 /// Produces observations; the coordinator owns dwell timers and overlay retention.
@@ -75,10 +77,11 @@ final class FinderTracker: ObservableObject {
         let active = NSWorkspace.shared.frontmostApplication
         let finderActive = active?.bundleIdentifier == "com.apple.finder"
         let ownAppActive = active?.processIdentifier == getpid()
-        // Once a panel becomes key, continue observing its originating Finder
-        // window's lifetime, without resolving hover items behind our own UI.
-        let finderPID = finderActive ? active?.processIdentifier : (ownAppActive ?
-            NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first?.processIdentifier : nil)
+        let ownWindowActive = ownAppActive && (NSApp.keyWindow != nil || NSApp.modalWindow != nil)
+        // A key/modal Hoover window keeps probes context-only. Closing onboarding
+        // can leave the accessory app frontmost with no key window; actual Finder
+        // hit testing must resume there without requiring another click.
+        let finderPID = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first?.processIdentifier
         guard permissionGranted, NSEvent.pressedMouseButtons == 0,
               let pid = finderPID, let activePID = active?.processIdentifier else {
             generation &+= 1
@@ -92,7 +95,7 @@ final class FinderTracker: ObservableObject {
         let token = generation
         let coordinates = FinderScreenCoordinates.current()
         let snapshot = FinderProbeSnapshot(pid: pid, pointer: pointer, coordinates: coordinates,
-                                           allowHitTesting: finderActive)
+                                           allowHitTesting: !ownWindowActive)
         let probe = self.probe
         queue.async { [weak self] in
             let result = probe.observe(snapshot)
@@ -110,11 +113,20 @@ final class FinderTracker: ObservableObject {
                                                          pointer: currentPointer))
                     return
                 }
+                if snapshot.allowHitTesting, currentApp?.processIdentifier == getpid(),
+                   NSApp.keyWindow != nil || NSApp.modalWindow != nil {
+                    // Opening settings/onboarding can retain the same foreground
+                    // PID while changing whether hover behind Hoover is allowed.
+                    self.onObservation?(FinderObservation(node: nil, bounds: nil, blocked: false,
+                                                         finderActive: false, pointer: currentPointer,
+                                                         liveWindowIDs: result.liveWindowIDs))
+                    return
+                }
                 // A slow AX answer must never activate a file the pointer already left.
                 // Also reject large movement within a tall row, since another child may
                 // now be under the cursor. The following tick resolves that position.
                 let distance = hypot(currentPointer.x - pointer.x, currentPointer.y - pointer.y)
-                guard !finderActive || result.blocked || (distance <= 8 && result.bounds?.insetBy(dx: -1, dy: -1).contains(currentPointer) != false) else {
+                guard !snapshot.allowHitTesting || result.blocked || (distance <= 8 && result.bounds?.insetBy(dx: -1, dy: -1).contains(currentPointer) != false) else {
                     self.onObservation?(FinderObservation(node: nil, bounds: nil, blocked: false,
                                                          finderActive: finderActive, pointer: currentPointer,
                                                          liveWindowIDs: result.liveWindowIDs))
@@ -124,7 +136,8 @@ final class FinderTracker: ObservableObject {
                                                      blocked: result.blocked, finderActive: finderActive,
                                                      pointer: currentPointer,
                                                      sourceWindowID: result.sourceWindowID,
-                                                     liveWindowIDs: result.liveWindowIDs))
+                                                     liveWindowIDs: result.liveWindowIDs,
+                                                     pointerOverFinder: result.pointerOverFinder))
             }
         }
     }
@@ -172,6 +185,7 @@ private struct FinderProbeResult {
     var blocked = false
     var sourceWindowID: Int? = nil
     var liveWindowIDs: Set<Int>? = nil
+    var pointerOverFinder = false
 }
 
 /// This object is accessed exclusively by FinderTracker's serial background queue.
@@ -206,15 +220,20 @@ private final class FinderAccessibilityProbe {
     }
 
     private func observeItem(_ snapshot: FinderProbeSnapshot, app: AXUIElement) -> FinderProbeResult {
-        if interactionIsBlocked(app) { return FinderProbeResult(blocked: true) }
-
         let point = snapshot.coordinates.quartzPoint(snapshot.pointer)
         var hit: AXUIElement?
         guard AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit) == .success,
               let hit else { return FinderProbeResult() }
         var pid: pid_t = 0
         guard AXUIElementGetPid(hit, &pid) == .success, pid == snapshot.pid else { return FinderProbeResult() }
+        var result = resolveFinderHit(hit, snapshot: snapshot, app: app, point: point)
+        result.pointerOverFinder = true
+        return result
+    }
 
+    private func resolveFinderHit(_ hit: AXUIElement, snapshot: FinderProbeSnapshot,
+                                  app: AXUIElement, point: CGPoint) -> FinderProbeResult {
+        if interactionIsBlocked(app) { return FinderProbeResult(blocked: true) }
         let chain = ancestors(of: hit, limit: 14)
         guard !chain.contains(where: isChrome), !chain.contains(where: isMenu) else {
             return FinderProbeResult(blocked: chain.contains(where: isMenu))
