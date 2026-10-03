@@ -28,10 +28,11 @@ public enum TreeSearch {
         guard !query.isEmpty else {
             return SearchResult(matches: [], visibleIDs: Set(records.map { $0.node.id }))
         }
+        let queryKey = QueryKey(query)
 
         var matches: [SearchMatch] = []
         for record in records {
-            if let rank = rank(query: query, record: record, fuzzy: fuzzy) {
+            if let rank = rank(query: queryKey, record: record, fuzzy: fuzzy) {
                 matches.append(SearchMatch(record: record, rank: rank))
             }
         }
@@ -46,8 +47,10 @@ public enum TreeSearch {
 
         guard !matches.isEmpty else { return SearchResult(matches: [], visibleIDs: []) }
         var byID: [String: IndexRecord] = [:]
-        byID.reserveCapacity(records.count)
-        for record in records { byID[record.node.id] = record }
+        // Every real parent is a directory. A tree with 100,000 files usually
+        // has far fewer parent records; hashing all leaf paths per keystroke
+        // wastes both memory and time.
+        for record in records where record.node.isDirectory { byID[record.node.id] = record }
 
         var visibleIDs: Set<String> = []
         visibleIDs.reserveCapacity(matches.count)
@@ -65,20 +68,52 @@ public enum TreeSearch {
     static func normalize(_ string: String) -> String {
         string.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
             .lowercased()
+            .precomposedStringWithCanonicalMapping
     }
 
-    private static func rank(query: String, record: IndexRecord, fuzzy: Bool) -> Int? {
+    private struct QueryKey {
+        let text: String
+        let bytes: [UInt8]
+        let extensionText: String
+        let allowsFuzzy: Bool
+
+        init(_ text: String) {
+            self.text = text
+            self.bytes = Array(text.utf8)
+            self.extensionText = text.hasPrefix(".") ? String(text.dropFirst()) : text
+            self.allowsFuzzy = text.count >= 2
+        }
+    }
+
+    private static func rank(query: QueryKey, record: IndexRecord, fuzzy: Bool) -> Int? {
         let name = record.normalizedName
-        if name == query { return 0 }
-        if record.normalizedBasename == query { return 1 }
-        if name.hasPrefix(query) { return 2 }
-        if record.normalizedBasename.contains(query) { return 3 }
-        let extensionQuery = query.hasPrefix(".") ? String(query.dropFirst()) : query
-        if !record.node.isDirectory, !extensionQuery.isEmpty,
-           record.normalizedExtension == extensionQuery { return 4 }
-        if name.contains(query) { return 3 }
-        if fuzzy, query.count >= 2, isSubsequence(query, of: name) { return 5 }
+        if name == query.text { return 0 }
+        if record.normalizedBasename == query.text { return 1 }
+        if name.utf8.starts(with: query.bytes) { return 2 }
+        if contains(query, in: record.normalizedBasename) { return 3 }
+        if !record.node.isDirectory, !query.extensionText.isEmpty,
+           record.normalizedExtension == query.extensionText { return 4 }
+        if contains(query, in: name) { return 3 }
+        if fuzzy, query.allowsFuzzy, isSubsequence(query.text, of: name) { return 5 }
         return nil
+    }
+
+    /// Both sides are normalized to NFC once. UTF-8 is self-synchronizing, so
+    /// complete query bytes cannot begin halfway through a Unicode character.
+    /// This avoids a Foundation substring search for every node and keystroke.
+    private static func contains(_ query: QueryKey, in name: String) -> Bool {
+        name.utf8.withContiguousStorageIfAvailable { bytes in
+            guard bytes.count >= query.bytes.count else { return false }
+            let finalStart = bytes.count - query.bytes.count
+            for start in 0...finalStart where bytes[start] == query.bytes[0] {
+                var offset = 1
+                while offset < query.bytes.count, bytes[start + offset] == query.bytes[offset] {
+                    offset += 1
+                }
+                if offset == query.bytes.count { return true }
+            }
+            return false
+        } ?? name.contains(query.text)
     }
 
     private static func isSubsequence(_ query: String, of name: String) -> Bool {

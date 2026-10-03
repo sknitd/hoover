@@ -74,8 +74,13 @@ final class FinderTracker: ObservableObject {
         let pointer = NSEvent.mouseLocation
         let active = NSWorkspace.shared.frontmostApplication
         let finderActive = active?.bundleIdentifier == "com.apple.finder"
-        guard permissionGranted, finderActive, NSEvent.pressedMouseButtons == 0,
-              let pid = active?.processIdentifier else {
+        let ownAppActive = active?.processIdentifier == getpid()
+        // Once a panel becomes key, continue observing its originating Finder
+        // window's lifetime, without resolving hover items behind our own UI.
+        let finderPID = finderActive ? active?.processIdentifier : (ownAppActive ?
+            NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first?.processIdentifier : nil)
+        guard permissionGranted, NSEvent.pressedMouseButtons == 0,
+              let pid = finderPID, let activePID = active?.processIdentifier else {
             generation &+= 1
             onObservation?(FinderObservation(node: nil, bounds: nil,
                                              blocked: !permissionGranted || NSEvent.pressedMouseButtons != 0,
@@ -86,7 +91,8 @@ final class FinderTracker: ObservableObject {
         inFlight = true
         let token = generation
         let coordinates = FinderScreenCoordinates.current()
-        let snapshot = FinderProbeSnapshot(pid: pid, pointer: pointer, coordinates: coordinates)
+        let snapshot = FinderProbeSnapshot(pid: pid, pointer: pointer, coordinates: coordinates,
+                                           allowHitTesting: finderActive)
         let probe = self.probe
         queue.async { [weak self] in
             let result = probe.observe(snapshot)
@@ -95,25 +101,27 @@ final class FinderTracker: ObservableObject {
                 self.inFlight = false
                 guard self.timer != nil, self.generation == token else { return }
                 let currentPointer = NSEvent.mouseLocation
-                let stillActive = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+                let currentApp = NSWorkspace.shared.frontmostApplication
+                let stillActive = currentApp?.processIdentifier == activePID
                 guard stillActive, NSEvent.pressedMouseButtons == 0 else {
                     self.onObservation?(FinderObservation(node: nil, bounds: nil,
                                                          blocked: NSEvent.pressedMouseButtons != 0,
-                                                         finderActive: stillActive, pointer: currentPointer))
+                                                         finderActive: currentApp?.bundleIdentifier == "com.apple.finder",
+                                                         pointer: currentPointer))
                     return
                 }
                 // A slow AX answer must never activate a file the pointer already left.
                 // Also reject large movement within a tall row, since another child may
                 // now be under the cursor. The following tick resolves that position.
                 let distance = hypot(currentPointer.x - pointer.x, currentPointer.y - pointer.y)
-                guard result.blocked || (distance <= 8 && result.bounds?.insetBy(dx: -1, dy: -1).contains(currentPointer) != false) else {
+                guard !finderActive || result.blocked || (distance <= 8 && result.bounds?.insetBy(dx: -1, dy: -1).contains(currentPointer) != false) else {
                     self.onObservation?(FinderObservation(node: nil, bounds: nil, blocked: false,
-                                                         finderActive: true, pointer: currentPointer,
+                                                         finderActive: finderActive, pointer: currentPointer,
                                                          liveWindowIDs: result.liveWindowIDs))
                     return
                 }
                 self.onObservation?(FinderObservation(node: result.node, bounds: result.bounds,
-                                                     blocked: result.blocked, finderActive: true,
+                                                     blocked: result.blocked, finderActive: finderActive,
                                                      pointer: currentPointer,
                                                      sourceWindowID: result.sourceWindowID,
                                                      liveWindowIDs: result.liveWindowIDs))
@@ -155,6 +163,7 @@ private struct FinderProbeSnapshot {
     let pid: pid_t
     let pointer: CGPoint
     let coordinates: FinderScreenCoordinates
+    let allowHitTesting: Bool
 }
 
 private struct FinderProbeResult {
@@ -191,7 +200,7 @@ private final class FinderAccessibilityProbe {
         }
         guard let finder else { return FinderProbeResult() }
         let liveWindows = liveWindowSnapshot(finder)
-        var result = observeItem(snapshot, app: finder)
+        var result = snapshot.allowHitTesting ? observeItem(snapshot, app: finder) : FinderProbeResult()
         result.liveWindowIDs = liveWindows
         return result
     }
@@ -283,6 +292,9 @@ private final class FinderAccessibilityProbe {
             if minimized as? Bool == true { continue }
             ids.insert(windowID(window))
         }
+        var finalCount: CFIndex = 0
+        guard AXUIElementGetAttributeValueCount(app, "AXWindows" as CFString, &finalCount) == .success,
+              finalCount == count else { return nil }
         return ids
     }
 

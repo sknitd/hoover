@@ -324,22 +324,12 @@ final class AppState: ObservableObject {
         filterTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 20_000_000)
             guard !Task.isCancelled else { return }
-            let result = await Task.detached(priority: .userInitiated) {
-                TreeSearch.search(query: value, records: records, fuzzy: fuzzy)
+            let (result, levels) = await Task.detached(priority: .userInitiated) {
+                let result = TreeSearch.search(query: value, records: records, fuzzy: fuzzy)
+                return (result, searchColumns(records: records, result: result, root: root))
             }.value
             guard !Task.isCancelled, let self, self.sessionRevision == revision,
                   self.filterRevision == queryRevision, self.isSearchActive else { return }
-            let surviving = records.filter { $0.depth > 0 && result.visibleIDs.contains($0.node.id) }
-            let grouped = Dictionary(grouping: surviving, by: \.depth)
-            let levels = grouped.keys.sorted().map { depth -> TreeColumn in
-                let nodes = grouped[depth]!.map(\.node).sorted {
-                    if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
-                    return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-                }
-                let parents = Set(nodes.map { $0.url.deletingLastPathComponent().path })
-                let parent = parents.count == 1 ? URL(fileURLWithPath: parents.first!) : root
-                return TreeColumn(parentURL: parent, level: depth, items: nodes)
-            }
             withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
                 self.columns = levels
                 self.searchMatchCount = result.matches.count
@@ -524,5 +514,21 @@ final class AppState: ObservableObject {
         let path = url.standardizedFileURL.path
         let scope = root.standardizedFileURL.path
         return path == scope || path.hasPrefix(scope.hasSuffix("/") ? scope : scope + "/")
+    }
+}
+
+/// Layout preparation stays on the search worker, including large-result sorting.
+private func searchColumns(records: [IndexRecord], result: SearchResult, root: URL) -> [TreeColumn] {
+    let surviving = records.filter { $0.depth > 0 && result.visibleIDs.contains($0.node.id) }
+    let grouped = Dictionary(grouping: surviving, by: \.depth)
+    return grouped.keys.sorted().map { depth in
+        let group = grouped[depth]!.sorted {
+            if $0.node.isDirectory != $1.node.isDirectory { return $0.node.isDirectory }
+            if $0.normalizedName != $1.normalizedName { return $0.normalizedName < $1.normalizedName }
+            return $0.node.id < $1.node.id
+        }
+        let parents = Set(group.compactMap(\.parentID))
+        let parent = parents.count == 1 ? URL(fileURLWithPath: parents.first!) : root
+        return TreeColumn(parentURL: parent, level: depth, items: group.map(\.node))
     }
 }

@@ -83,6 +83,9 @@ enum TextMetadata {
                            ("Key count", String(countKeys(parsed))), ("Nesting depth", String(depth(parsed)))]
             }
         } else if ext == "xml" {
+            guard source.range(of: "<!DOCTYPE", options: .caseInsensitive) == nil else {
+                return [MetadataInspector.section("Configuration", [("Validity", "Not validated; DTD parsing is disabled during hover inspection.")])]
+            }
             let parser = XMLParser(data: data)
             let delegate = BoundedXMLCounter()
             parser.delegate = delegate

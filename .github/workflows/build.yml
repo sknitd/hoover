@@ -16,13 +16,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build, test, package and verify signature
-        run: bash scripts/build-app.sh
+        run: bash scripts/ci-build.sh bash scripts/build-app.sh
+        env:
+          HOOVER_SNAPSHOT_DIR: ${{ github.workspace }}/dist/evaluation-snapshots
       - name: Upload compiled universal macOS app
         uses: actions/upload-artifact@v4
         with:
           name: Hoover-${{ matrix.os }}
           path: dist/Hoover-macOS.zip
           if-no-files-found: error
+      - name: Upload native UI evaluation snapshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hoover-UI-${{ matrix.os }}
+          path: dist/evaluation-snapshots/*.png
+          if-no-files-found: warn
   core:
     name: Portable core validation
     runs-on: ubuntu-24.04
@@ -30,4 +38,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Test core and parse native sources
-        run: bash scripts/check-source.sh
+        run: bash scripts/ci-build.sh bash scripts/check-source.sh

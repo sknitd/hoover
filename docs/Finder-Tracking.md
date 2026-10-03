@@ -12,7 +12,7 @@ Column views use per-item file URLs or directory URLs on the hit column's contai
 
 The pointer and published bounds use AppKit screen coordinates. The conversion reflects Quartz's global Y axis around the primary display, preserving positions on displays above, below, or left of it. It does not reflect around the hovered secondary display.
 
-Observations include the source Finder window token and a bounded snapshot of non-minimized live Finder windows. Incomplete or failed window snapshots are represented as unknown (`nil`), so they cannot falsely dismiss a session. The app coordinator can dismiss a folder session when its original window closes or is minimized, while keeping it open during ordinary pointer exploration. Desktop items have no source window token.
+Observations include the source Finder window token and a bounded snapshot of non-minimized live Finder windows. Incomplete or failed window snapshots are represented as unknown (`nil`), so they cannot falsely dismiss a session. The app coordinator can dismiss a folder session when its original window closes or is minimized, while keeping it open during ordinary pointer exploration. Desktop items have no source window token. While Hoover itself is frontmost, only window lifetime snapshots continue; new Finder hover items are never resolved behind the active panel.
 
 Finder losing focus, held mouse buttons/dragging, focused text editors, open context menus, and modal Finder sheets clear item observations. Accessibility permission is checked every two seconds, with prompts only on an explicit user request. The app coordinator owns folder/file delays, Escape dismissal, and whether an active overlay remains open while the pointer moves from Finder into Hoover.
 

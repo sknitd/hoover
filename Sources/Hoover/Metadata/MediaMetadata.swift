@@ -175,6 +175,9 @@ enum MediaMetadata {
                 ("Style", CTFontCopyFullName(font) as String), ("Glyphs", String(CTFontGetGlyphCount(font))), ("Faces", String(descriptors.count))])]
         }
         if ext == "svg", let data = MetadataInspector.boundedData(url), let text = String(data: data, encoding: .utf8) {
+            guard text.range(of: "<!DOCTYPE", options: .caseInsensitive) == nil else {
+                return [MetadataInspector.section("SVG", [("XML", "Not validated; DTD parsing is disabled during hover inspection.")])]
+            }
             let parser = XMLParser(data: data), counter = BoundedXMLCounter()
             parser.delegate = counter
             parser.shouldResolveExternalEntities = false

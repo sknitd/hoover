@@ -13,12 +13,4 @@ else
   # Linux cannot type-check AppKit. Parsing still catches malformed native source.
   find Sources/Hoover -name '*.swift' -print0 | xargs -0 -r swiftc -frontend -parse
 fi
-python3 - <<'PY'
-import plistlib
-from pathlib import Path
-info = plistlib.loads(Path('Sources/Hoover/Resources/Info.plist').read_bytes())
-assert info['LSUIElement'] is True
-assert info['CFBundleExecutable'] == 'Hoover'
-assert info['LSMinimumSystemVersion'] == '13.0'
-print('Bundle metadata validated.')
-PY
+swift scripts/check-bundle.swift

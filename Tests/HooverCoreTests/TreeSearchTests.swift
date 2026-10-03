@@ -61,4 +61,12 @@ final class TreeSearchTests: XCTestCase {
         let b = record("b", parent: "a", folder: true)
         XCTAssertEqual(TreeSearch.search(query: "a", records: [a, b]).visibleIDs, [a.node.id, b.node.id])
     }
+
+    func testByteMatchingPreservesUnicodeNamesAndCanonicalEquivalence() {
+        let unicode = record("資料📁.txt")
+        XCTAssertEqual(TreeSearch.search(query: "料📁", records: [unicode]).matches.first?.rank, 3)
+        XCTAssertTrue(TreeSearch.search(query: "📂", records: [unicode]).matches.isEmpty)
+        let korean = record("각.swift")
+        XCTAssertEqual(TreeSearch.search(query: "각", records: [korean]).matches.first?.rank, 1)
+    }
 }

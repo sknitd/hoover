@@ -46,6 +46,26 @@ final class MetadataTests: XCTestCase {
         XCTAssertNil(value(result.sections, "Key count"))
     }
 
+    func testBinaryPlistIsValidatedWithoutPretendingItIsText() throws {
+        let url = directory.appendingPathComponent("Preferences.plist")
+        let data = try PropertyListSerialization.data(fromPropertyList: ["active": true, "delay": 3], format: .binary, options: 0)
+        try data.write(to: url)
+        let result = TextMetadata.inspect(url, size: Int64(data.count))
+        XCTAssertEqual(value(result.sections, "Validity"), "Valid")
+        XCTAssertEqual(value(result.sections, "Key count"), "2")
+        XCTAssertNil(result.preview)
+    }
+
+    func testXMLDTDAndExternalEntitiesAreNotEvaluated() throws {
+        let source = "<!DOCTYPE root [<!ENTITY outside SYSTEM 'file:///etc/passwd'>]><root>&outside;</root>"
+        let result = TextMetadata.inspect(try file("entities.xml", source), size: Int64(source.utf8.count))
+        XCTAssertTrue(value(result.sections, "Validity")?.contains("DTD parsing is disabled") == true)
+        XCTAssertNil(value(result.sections, "Elements"))
+        // The bounded source snippet can show the declaration itself, never the
+        // referenced external file's contents.
+        XCTAssertFalse(result.preview?.contains("root:x:") == true)
+    }
+
     func testBoundedPreviewMarksPartialStatistics() throws {
         let source = String(repeating: "let value = 1\n", count: 30_000)
         let result = TextMetadata.inspect(try file("Long.swift", source), size: Int64(source.utf8.count))
