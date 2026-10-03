@@ -386,15 +386,14 @@ final class AppState: ObservableObject {
             guard !Task.isCancelled, self.previewRevision == revision,
                   self.focusedNode?.id == node.id else { return }
             self.preview = basic
-            let thumbnailTask = Task { @MainActor [weak self] () -> NSImage? in
-                guard let self, self.settings.showThumbnail else { return nil }
-                return await self.metadata.thumbnail(url: node.url)
-            }
+            let wantsThumbnail = self.settings.showThumbnail
+            // A structured child cannot outlive the preview and cancel a newer file's request.
+            async let thumbnail: NSImage? = wantsThumbnail ? self.metadata.thumbnail(url: node.url) : nil
             var result = await self.metadata.load(url: node.url)
             guard !Task.isCancelled, self.previewRevision == revision,
                   self.focusedNode?.id == node.id else { return }
             self.preview = result
-            if let thumbnail = await thumbnailTask.value {
+            if let thumbnail = await thumbnail {
                 guard !Task.isCancelled, self.previewRevision == revision,
                       self.focusedNode?.id == node.id else { return }
                 result.thumbnail = thumbnail

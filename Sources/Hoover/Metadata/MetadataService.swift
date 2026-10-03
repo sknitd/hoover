@@ -7,6 +7,7 @@ final class MetadataService {
     private var loading: Task<FileMetadata, Never>?
     private var thumbnailRequest: QLThumbnailGenerator.Request?
     private var generation = UUID()
+    private var thumbnailGeneration = UUID()
 
     /// Use this first so the HUD can appear while richer analysis is still running.
     func basic(url: URL) async -> FileMetadata {
@@ -34,9 +35,14 @@ final class MetadataService {
 
     /// Generate separately from metadata; never cause an iCloud download on hover.
     func thumbnail(url: URL) async -> NSImage? {
+        guard !Task.isCancelled else { return nil }
+        let token = UUID()
+        thumbnailGeneration = token
         if let request = thumbnailRequest { QLThumbnailGenerator.shared.cancel(request) }
+        thumbnailRequest = nil
         let info = await Task.detached { MetadataInspector.basic(url: url) }.value
-        guard info.canReadContent, info.size <= MetadataInspector.contentLimit, !Task.isCancelled else { return nil }
+        guard thumbnailGeneration == token, !Task.isCancelled,
+              info.canReadContent, info.size <= MetadataInspector.contentLimit else { return nil }
         let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: 560, height: 360),
                                                    scale: NSScreen.main?.backingScaleFactor ?? 2,
                                                    representationTypes: [.thumbnail])
@@ -57,9 +63,11 @@ final class MetadataService {
             generator.cancel(request)
         })
         if thumbnailRequest === request { thumbnailRequest = nil }
-        guard !Task.isCancelled else { return nil }
+        guard thumbnailGeneration == token, !Task.isCancelled else { return nil }
         if let image { return image }
-        return await Task.detached { await MediaMetadata.audioArtwork(url) }.value
+        let artwork = await Task.detached { await MediaMetadata.audioArtwork(url) }.value
+        guard thumbnailGeneration == token, !Task.isCancelled else { return nil }
+        return artwork
     }
 
     func note(url: URL) async -> String? {
@@ -75,6 +83,7 @@ final class MetadataService {
 
     func cancel() {
         generation = UUID()
+        thumbnailGeneration = UUID()
         loading?.cancel()
         loading = nil
         if let request = thumbnailRequest { QLThumbnailGenerator.shared.cancel(request) }

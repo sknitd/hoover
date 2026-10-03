@@ -1,6 +1,6 @@
 # Hoover evaluation record
 
-Evaluation date: 2026-10-04. The current cloud host is Debian 13 x86_64; native macOS testing is delegated to the macOS GitHub workflow and interactive Mac checks.
+Evaluation date: 2026-10-04. The current cloud host is Debian 13 x86_64. The native GitHub workflow has built and tested real macOS applications on both macOS 14 and 15; interactive Finder checks still require a Mac desktop.
 
 ## Toolchain integrity
 
@@ -13,13 +13,18 @@ Swift and module caches use writable locations under `/workspace`; no HOME overr
 | Check | Result | Scope |
 | --- | --- | --- |
 | Portable unit tests, initial independent run | PASS, 23 XCTest cases | Hover timers/suppression, Escape, filesystem enumeration, root-confined search, ranking, exclusions, hidden/packages, deep nesting, symlink loops/escapes, cancellation. |
-| Final optimized core and bounded streaming | Independent PASS, **25 XCTest cases** | Adds a slow-consumer regression with 2,001 records delivered once each and a Unicode byte-matching/canonical-equivalence regression. |
-| Native Swift syntax | PASS in independent integrated recheck | Swift parser accepts native sources without loading Apple SDKs. Semantic/API validation requires macOS. |
+| Final optimized core and bounded streaming | Independent Linux PASS, 25 cases; native CI PASS, **26 cases** | Includes a slow-consumer regression with 2,001 records delivered once each, Unicode byte matching/canonical equivalence, and root context excluded from descendant matches. |
+| Native Swift syntax and semantic/API build | PASS on macOS 14 and 15 | Real Apple SDK compilation and linking succeeded in the native workflow; Linux syntax parsing also passed. |
 | Bundle metadata and shell syntax | PASS | `LSUIElement`, executable name, minimum macOS, valid plist data, `bash -n`, icon-script Swift parsing. |
-| Native metadata/settings/session/rendering/action tests | PENDING macOS, **27 tests authored** | Test-only real file fixtures for ZIP, notes, subprocesses, text, images, PDF, settings, session restoration, native view snapshots, actual recoverable Trash, and clipboard operations. |
-| Native release app build and signature verification | PENDING macOS | Universal Mach-O, Info.plist, `.icns`, resource bundle, ad-hoc/selected identity signing, signature validation, archive. Linux does not produce a pretend `.app`. |
-| Packaged application launch smoke | PENDING macOS CI | Launch the compiled app, require `applicationDidFinishLaunching` readiness marker and a running process, then stop only the test-launched process. This does not establish interactive Finder correctness. |
+| Native metadata/settings/session/rendering/action tests | PASS, **31 native + 26 core = 57 tests**, zero failures and zero skips, on each platform | Test-only real file fixtures for ZIP, notes, strict JSON/XML, subprocesses, text, images, PDF, settings, session restoration, native view snapshots, actual recoverable Trash, and clipboard operations. |
+| Native release app build and signature verification | PASS on macOS 14 and 15 | Real universal arm64 + x86_64 Mach-O, Info.plist, `.icns`, resources in standard Contents/Resources, ad-hoc signing, strict signature verification, and downloadable ZIP artifacts. |
+| Packaged application launch smoke | PASS on both macOS hosts | Compiled app reported `applicationDidFinishLaunching` and remained running before only the test-launched process was stopped. This does not establish interactive Finder correctness. |
+| Native UI snapshot generation | PASS, four PNGs on each macOS host | Dark hierarchy, light hierarchy, filtered ancestry, and source HUD rendered. The cloud runtime blocks the external artifact blob host, so human visual inspection of downloaded snapshots remains pending. |
 | Interactive tests A–J | PENDING interactive Mac | Accessibility detection, actual Finder/default app opening, window placement, keyboard interception, Trash, Quick Look, and display behavior need a macOS desktop. |
+
+Native proof: [successful workflow run 37149659288](https://github.com/sknitd/hoover/actions/runs/37149659288), commit `d05a619`. The compiled universal apps are available as [macOS 14 artifact](https://github.com/sknitd/hoover/actions/runs/37149659288/artifacts/11283541348) and [macOS 15 artifact](https://github.com/sknitd/hoover/actions/runs/37149659288/artifacts/11283606379). UI snapshots are separate artifacts on the same run.
+
+A final preview-cancellation improvement uses a structured thumbnail child task, checks cancellation before mutating Quick Look state, and independently invalidates stale thumbnail generations. Independent source review, Swift parsing, and whitespace checks pass; a final native workflow rerun is pending for this last source change. The table above records the completed native run without claiming that rerun has finished.
 
 ## Large-tree evaluation and repair loop
 
@@ -39,9 +44,10 @@ An independent final optimized rerun indexed all 100,101 records in **4.533 seco
 - Inner folder dwell now cancels on hover exit; asynchronous loading no longer presents a misleading empty-folder state; search without matches has a visible state.
 - Tree-column identity includes level, preventing duplicate identities when multiple search branches share a contextual parent.
 - Icon caches have a bounded entry count. Native glass has a supported-version path and fallback.
+- Strict bounded JSON validation rejects extensions accepted by Darwin's permissive Foundation parser; metadata labels have unique stable identities even when localized fields repeat.
 
 ## Known inspection limits
 
 Metadata is local and bounded. Unsupported or partial formats are labeled honestly: 7z/RAR native content parsing is unavailable; ISO/disk-image names are not mounted to list files; general 3D meshes are not deeply parsed except bounded OBJ statistics; YAML/TOML are observed rather than fully validated. RAW, media, artwork, and Quick Look support depends on the macOS frameworks and installed system support. Files above the deep-inspection size limit still receive basic metadata. These limitations remain visible in the HUD.
 
-The release decision requires the macOS semantic build and [Test-Plan.md](Test-Plan.md)'s interactive checks. Native screenshots can support visual inspection but do not establish actual Finder detection or file-action correctness.
+The macOS semantic builds, automatic tests, signing checks, and launch smoke have passed. [Test-Plan.md](Test-Plan.md)'s interactive checks remain necessary before claiming Finder behavior and visual quality are fully verified. Native screenshots can support visual inspection but do not establish actual Finder detection or file-action correctness.
