@@ -103,7 +103,13 @@ final class OverlayController {
         updatePointerRouting()
     }
 
-    func dismiss() {
+    func dismiss(restoreFinder: Bool = true) {
+        // File opening disables restoration explicitly: Launch Services can
+        // return before the new default application becomes frontmost.
+        let shouldRestoreFinder = restoreFinder && panel.isKeyWindow && NSApp.keyWindow === panel
+            && NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid()
+            && NSApp.modalWindow == nil
+            && !NSApp.windows.contains { $0 !== panel && $0.isVisible && $0.canBecomeKey }
         keyboard.stop()
         pointerTimer?.invalidate()
         pointerTimer = nil
@@ -113,6 +119,10 @@ final class OverlayController {
         panel.alphaValue = 1
         hosting.rootView = AnyView(EmptyView())
         interactionRects = []
+        if shouldRestoreFinder {
+            NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == "com.apple.finder" }?
+                .activate(options: [.activateIgnoringOtherApps])
+        }
     }
 
     private var localPointer: CGPoint {

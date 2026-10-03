@@ -54,7 +54,7 @@ final class AppState: ObservableObject {
     init(settings: HooverSettings) {
         self.settings = settings
         actions = FileActions(settings: settings)
-        actions.onDismiss = { [weak self] in self?.dismiss() }
+        actions.onDismiss = { [weak self] in self?.dismiss(restoreFinder: false) }
         actions.onChanged = { [weak self] _ in self?.refresh() }
         actions.onError = { [weak self] message in self?.errorMessage = message }
         tracker.onObservation = { [weak self] observation in self?.observeFinder(observation) }
@@ -81,20 +81,20 @@ final class AppState: ObservableObject {
                   app.bundleIdentifier != "com.apple.finder", app.processIdentifier != getpid() else { return }
             Task { @MainActor [weak self] in
                 guard let self, !self.actions.isOpening else { return }
-                self.dismiss()
+                self.dismiss(restoreFinder: false)
             }
         }
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, self.settings.clickOutsideDismiss, self.overlay.isVisible,
                       !self.overlay.containsPointer else { return }
-                self.dismiss()
+                self.dismiss(restoreFinder: false)
             }
         }
     }
 
     func stop() {
-        dismiss()
+        dismiss(restoreFinder: false)
         tracker.stop()
         if let observer = appActivationObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
@@ -117,13 +117,13 @@ final class AppState: ObservableObject {
 
     private func observeFinder(_ observation: FinderObservation) {
         guard settings.enabled else { hoverMachine.reset(); return }
-        if actions.isOpening { hoverProgress = 0; return }
+        if actions.isOpening { setHoverProgress(0); return }
         if let source = sourceWindowID, let windows = observation.liveWindowIDs, !windows.contains(source) {
             dismiss()
             return
         }
         // Moving from Finder into Hoover must not count as leaving the item.
-        if overlay.isVisible && overlay.containsPointer { hoverProgress = 0; return }
+        if overlay.isVisible && overlay.containsPointer { setHoverProgress(0); return }
         if !observation.finderActive {
             let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
             if frontmost == getpid(), overlay.isVisible { return }
@@ -137,7 +137,7 @@ final class AppState: ObservableObject {
         }
         if observation.blocked {
             hoverMachine.reset()
-            hoverProgress = 0
+            setHoverProgress(0)
             if rootURL == nil, overlay.isVisible { dismiss() }
             return
         }
@@ -149,7 +149,7 @@ final class AppState: ObservableObject {
         hoverMachine.fileDelay = settings.fileDelay
         let action = hoverMachine.update(node: node, timestamp: ProcessInfo.processInfo.systemUptime,
                                          blocked: observation.blocked)
-        hoverProgress = settings.showCountdown ? hoverMachine.progress : 0
+        setHoverProgress(settings.showCountdown ? hoverMachine.progress : 0)
         switch action {
         case .none: break
         case .dismiss:
@@ -474,11 +474,15 @@ final class AppState: ObservableObject {
         }
     }
 
-    func dismiss() {
+    func dismiss(restoreFinder: Bool = true) {
         dismissUntilPointerLeaves = lastFinderNode
         hoverMachine.reset()
         endSession()
-        overlay.dismiss()
+        overlay.dismiss(restoreFinder: restoreFinder)
+    }
+
+    private func setHoverProgress(_ progress: Double) {
+        if hoverProgress != progress { hoverProgress = progress }
     }
 
     private func endSession() {
@@ -510,7 +514,7 @@ final class AppState: ObservableObject {
         searchMatchCount = 0
         isIndexing = false
         errorMessage = nil
-        hoverProgress = 0
+        setHoverProgress(0)
         lastInnerHover = nil
     }
 

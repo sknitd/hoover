@@ -129,8 +129,10 @@ private struct TreeColumnView: View {
 
     private var title: String {
         if column.level == 1 { return "DIRECT TREE" }
-        let parents = Set(column.items.map { $0.url.deletingLastPathComponent().path })
-        return parents.count > 1 ? "MATCHING BRANCHES" : column.parentURL.lastPathComponent.uppercased()
+        if state.isSearchActive, !state.query.isEmpty, column.parentURL == state.rootURL {
+            return "MATCHING BRANCHES"
+        }
+        return column.parentURL.lastPathComponent.uppercased()
     }
 
     var body: some View {

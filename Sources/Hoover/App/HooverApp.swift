@@ -115,7 +115,7 @@ final class HooverAppDelegate: NSResponder, NSApplicationDelegate, NSMenuDelegat
     @objc private func quit() { NSApp.terminate(nil) }
 
     @objc private func showSettings() {
-        state.dismiss()
+        state.dismiss(restoreFinder: false)
         if settingsWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 640),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -132,7 +132,7 @@ final class HooverAppDelegate: NSResponder, NSApplicationDelegate, NSMenuDelegat
     }
 
     @objc private func showPermissionWindow() {
-        state.dismiss()
+        state.dismiss(restoreFinder: false)
         if permissionWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 510, height: 390),
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -147,7 +147,7 @@ final class HooverAppDelegate: NSResponder, NSApplicationDelegate, NSMenuDelegat
     }
 
     @objc private func showAbout() {
-        state.dismiss()
+        state.dismiss(restoreFinder: false)
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Hoover"
