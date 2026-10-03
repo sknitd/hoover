@@ -40,7 +40,7 @@ EdgeDock-source/
 | B | Hover the `EdgeDock` card | Level 2 opens after the configured inner dwell, approximately 300 ms. Leaving the card early cancels it. |
 | C | Hover `Core`, then further real nested folders beyond Level 4 | Every level opens; trackpad and Shift+wheel navigate horizontally; new levels scroll into view without screen clipping. |
 | D | Press ⌘F and type `DockController` one character at a time | Immediate local subtree filtering; unrelated branches dissolve; full root → EdgeDock → Core → file ancestry remains. Searching `swift`, `README.md`, folder names, and `Config` also works. Multiple matching branches remain simultaneously. |
-| E | Press Escape twice during search | First restores the normal tree and dismisses search; second dismisses the entire overlay. Escape outside search dismisses in one step. A stationary pointer does not reopen it immediately. |
+| E | Press Escape twice during search | First restores the normal tree and dismisses search; second dismisses the entire overlay. If search made Hoover the foreground key panel, final dismissal returns keyboard focus to Finder. Escape outside search dismisses in one step. A stationary pointer does not reopen it immediately. |
 | F | Hover `statement.pdf` | A separate File HUD opens after approximately 600 ms, with native thumbnail and page metadata; no folder levels appear. |
 | G | Hover a real JPEG/HEIC/CR3 with known camera/GPS metadata | Image dimensions and available EXIF/IPTC/XMP appear. Missing camera/HDR information is not invented. Unsupported RAW thumbnail support is shown honestly. |
 | H | Hover a ZIP with nested names and an encrypted-entry variant | Counts, contents, declared encryption, and compression totals appear without extracting anything. Unsupported archive features are labeled unavailable/partial. |
@@ -48,6 +48,8 @@ EdgeDock-source/
 | J | Double-click a file, then a folder, in both normal and filtered HUD/tree paths | File opens with its registered default application. Folder opens in a **new Finder window** targeting that folder. Successful opening dismisses the HUD. Automation denial produces a useful error and does not claim success. |
 
 Repeat A, F, and J in Finder icon, list, column, and gallery views, including hidden extensions, localized filenames, spaces, quotes, and Unicode. Test earlier columns while a different final column is selected. Hovering toolbar/sidebar/search controls or empty Finder background must not resolve a selected file elsewhere.
+
+Repeat E after focusing the search field. Verify that first Escape preserves the X-Ray session and second Escape lets Finder immediately receive keyboard navigation. Check that clicking another app or dismissing through a successful file/Open With action leaves that app in front; Hoover must not reactivate Finder over the chosen default app. With a Hoover settings window or modal dialog visible, dismissing an overlay must preserve that window's focus.
 
 ## Session, safety, and appearance checks
 

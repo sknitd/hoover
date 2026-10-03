@@ -24,7 +24,7 @@ The script runs tests, builds both Apple Silicon and Intel binaries, creates a u
 
 An ad-hoc signature is for local use. Developer ID signing and notarization for distribution require the developer's Apple identity; the build accepts `HOOVER_SIGNING_IDENTITY` but does not embed credentials or impersonate a Developer ID.
 
-GitHub Actions also builds, tests, and uploads the application on macOS 14 and 15. Download the compiled app from the successful **Build and evaluate Hoover** workflow's artifacts.
+GitHub Actions also builds, tests, and uploads the application on macOS 14 and 15. [Download the verified universal app](https://github.com/sknitd/hoover/actions/runs/37150538584/artifacts/11283443214) from the [successful native workflow](https://github.com/sknitd/hoover/actions/runs/37150538584). Unzip the downloaded artifact, then unzip its `Hoover-macOS.zip` to obtain `Hoover.app`. Both native jobs passed 57 tests, signature verification, and a launch smoke check; live Finder and visual checks remain listed in the test plan.
 
 ## First launch
 
