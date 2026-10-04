@@ -253,8 +253,10 @@ extension AppState {
     }
 
     nonisolated static func inventoryCSV(_ records: [IndexRecord], indexFinished: Bool = true) -> String {
+        // Scalar membership keeps CR and LF distinct; Swift combines CRLF as one Character.
+        let formulaPrefixes: Set<UInt32> = [61, 43, 45, 64, 9, 10, 13]
         func cell(_ text: String) -> String {
-            let safe = text.first.map { "=+-@\t\r\n".contains($0) } == true ? "'" + text : text
+            let safe = text.unicodeScalars.first.map { formulaPrefixes.contains($0.value) } == true ? "'" + text : text
             return "\"" + safe.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         }
         let formatter = ISO8601DateFormatter()
