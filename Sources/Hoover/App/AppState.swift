@@ -375,22 +375,25 @@ final class AppState: ObservableObject {
             guard !Task.isCancelled else { return }
             let sort = self?.sortOrder ?? .name
             let ascending = self?.sortAscending ?? true
-            let worker = Task.detached(priority: .userInitiated) { () -> Result<(SearchResult, [TreeColumn]), Error> in
+            let worker = Task.detached(priority: .userInitiated) { () -> Result<(SearchResult, [TreeColumn], [FileNode]), Error> in
                 Result {
                     let result = try AdvancedSearch.search(query: value, records: records, fuzzy: fuzzy)
-                    return (result, searchColumns(records: records, result: result, root: root,
-                                                  sort: sort, ascending: ascending))
+                    let levels = searchColumns(records: records, result: result, root: root,
+                                               sort: sort, ascending: ascending)
+                    let matchIDs = Set(result.matches.map { $0.record.node.id })
+                    let orderedMatches = levels.flatMap { $0.items.filter { matchIDs.contains($0.id) } }
+                    return (result, levels, orderedMatches)
                 }
             }
             let outcome = await withTaskCancellationHandler(operation: { await worker.value }, onCancel: { worker.cancel() })
             guard !Task.isCancelled, let self, self.sessionRevision == revision,
                   self.filterRevision == queryRevision, self.isSearchActive else { return }
             switch outcome {
-            case .success(let (result, levels)):
+            case .success(let (result, levels, orderedMatches)):
                 self.errorMessage = nil
                 self.columns = levels
                 self.searchMatchCount = result.matches.count
-                self.searchMatches = result.matches.map { $0.record.node }
+                self.searchMatches = orderedMatches
                 self.selectedPath = result.visibleIDs
             case .failure(let error):
                 self.errorMessage = error.localizedDescription
