@@ -254,7 +254,7 @@ extension AppState {
 
     nonisolated static func inventoryCSV(_ records: [IndexRecord], indexFinished: Bool = true) -> String {
         func cell(_ text: String) -> String {
-            let safe = text.first.map { "=+-@\t\r".contains($0) } == true ? "'" + text : text
+            let safe = text.first.map { "=+-@\t\r\n".contains($0) } == true ? "'" + text : text
             return "\"" + safe.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         }
         let formatter = ISO8601DateFormatter()

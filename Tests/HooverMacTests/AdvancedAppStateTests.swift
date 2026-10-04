@@ -288,11 +288,13 @@ final class AdvancedAppStateTests: XCTestCase {
         let root = try fixture.folder("Project")
         _ = try fixture.file("Project/=SUM(1,2).txt", bytes: 1)
         _ = try fixture.file("Project/line,\n\"quote\".txt", bytes: 2)
+        _ = try fixture.file("Project/\n=SUM(2,3).txt", bytes: 3)
         fixture.state.openWorkspace(root)
-        try await waitUntil("Real manifest records arrive") { !fixture.state.isIndexing && fixture.state.indexRecords.count == 3 }
+        try await waitUntil("Real manifest records arrive") { !fixture.state.isIndexing && fixture.state.indexRecords.count == 4 }
         let csv = AppState.inventoryCSV(fixture.state.indexRecords)
         XCTAssertTrue(csv.contains("\"'=SUM(1,2).txt\""))
         XCTAssertTrue(csv.contains("\"line,\n\"\"quote\"\".txt\""))
+        XCTAssertTrue(csv.contains("\"'\n=SUM(2,3).txt\""), "A leading newline cannot bypass spreadsheet-formula neutralization.")
         XCTAssertFalse(csv.contains(root.path), "Manifest paths must be relative descendants, without the contextual root row.")
         XCTAssertTrue(csv.contains(",\"finished\"\r\n"))
         let partial = AppState.inventoryCSV(fixture.state.indexRecords, indexFinished: false)
