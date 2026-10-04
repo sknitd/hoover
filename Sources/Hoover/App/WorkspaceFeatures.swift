@@ -68,16 +68,41 @@ extension AppState {
     func setSortOrder(_ value: NodeSortOrder) { sortOrder = value; resortColumns(); if isSearchActive { updateQuery(query) } }
     func setAscending(_ value: Bool) { sortAscending = value; resortColumns(); if isSearchActive { updateQuery(query) } }
 
-    private func resortColumns() {
-        func sorted(_ input: [TreeColumn]) -> [TreeColumn] {
-            input.map { column in
-                var column = column
-                column.items = TreeOrdering.sorted(column.items, by: sortOrder, ascending: sortAscending)
-                return column
-            }
+    func resortColumns() {
+        orderingTask?.cancel()
+        let current = columns
+        let normal = normalColumns
+        let order = sortOrder
+        let ascending = sortAscending
+        let revision = sessionRevision
+        let visibleRevision = columnsRevision
+        let savedRevision = normalColumnsRevision
+        let searchOwnsVisible = isSearchActive && !query.isEmpty
+        let total = current.reduce(0) { $0 + $1.items.count } + normal.reduce(0) { $0 + $1.items.count }
+        if total < 500 {
+            if !searchOwnsVisible { columns = Self.orderedColumns(current, order: order, ascending: ascending) }
+            normalColumns = Self.orderedColumns(normal, order: order, ascending: ascending)
+            return
         }
-        columns = sorted(columns)
-        normalColumns = sorted(normalColumns)
+        orderingTask = Task { [weak self] in
+            let worker = Task.detached(priority: .userInitiated) {
+                (searchOwnsVisible ? current : Self.orderedColumns(current, order: order, ascending: ascending),
+                 Self.orderedColumns(normal, order: order, ascending: ascending))
+            }
+            let (visible, saved) = await withTaskCancellationHandler(operation: { await worker.value }, onCancel: { worker.cancel() })
+            guard !Task.isCancelled, let self, self.sessionRevision == revision,
+                  self.sortOrder == order, self.sortAscending == ascending else { return }
+            if !searchOwnsVisible, self.columnsRevision == visibleRevision { self.columns = visible }
+            if self.normalColumnsRevision == savedRevision { self.normalColumns = saved }
+        }
+    }
+
+    nonisolated static func orderedColumns(_ input: [TreeColumn], order: NodeSortOrder, ascending: Bool) -> [TreeColumn] {
+        input.map { column in
+            var column = column
+            column.items = TreeOrdering.sorted(column.items, by: order, ascending: ascending)
+            return column
+        }
     }
 
     var breadcrumbURLs: [URL] {
@@ -200,6 +225,7 @@ extension AppState {
         focusedNode = nil
         preview = nil
         selectedPath = Set(rootURL.map { [$0.path] } ?? [])
+        resortColumns()
     }
 
     func exportManifest() {

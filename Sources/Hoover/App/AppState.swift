@@ -6,7 +6,10 @@ import SwiftUI
 
 @MainActor
 final class AppState: ObservableObject {
-    @Published var columns: [TreeColumn] = []
+    @Published var columns: [TreeColumn] = [] { didSet { columnsRevision &+= 1 } }
+    var columnsRevision = 0
+    var normalColumnsRevision = 0
+    var orderingTask: Task<Void, Never>?
     @Published var rootURL: URL?
     @Published var focusedNode: FileNode? {
         didSet { if focusedNode?.id != oldValue?.id { actions.cancelChecksum() } }
@@ -42,7 +45,7 @@ final class AppState: ObservableObject {
     private let indexer = RootIndexer()
     private var hoverMachine = HoverStateMachine()
     var indexRecords: [IndexRecord] = []
-    var normalColumns: [TreeColumn] = []
+    var normalColumns: [TreeColumn] = [] { didSet { normalColumnsRevision &+= 1 } }
     private var normalFocusedNode: FileNode?
     private var normalSelectedPath: Set<String> = []
     private var indexingTask: Task<Void, Never>?
@@ -293,6 +296,8 @@ final class AppState: ObservableObject {
         let revision = sessionRevision
         let hidden = settings.includeHidden
         let excluded = settings.exclusionPredicate()
+        let order = sortOrder
+        let ascending = sortAscending
         enumerationTasks[level]?.cancel()
         // Present a loading column before filesystem work, with no synchronous enumeration on the UI thread.
         columns.removeAll { $0.level >= level }
@@ -300,7 +305,10 @@ final class AppState: ObservableObject {
         if isSearchActive { normalColumns = columns }
         enumerationTasks[level] = Task { [weak self] in
             let result: Result<[FileNode], Error> = await Task.detached(priority: .userInitiated) {
-                Result { try DirectoryReader.contents(of: parent, includeHidden: hidden).filter { !excluded($0.url) } }
+                Result {
+                    let nodes = try DirectoryReader.contents(of: parent, includeHidden: hidden).filter { !excluded($0.url) }
+                    return TreeOrdering.sorted(nodes, by: order, ascending: ascending)
+                }
             }.value
             guard !Task.isCancelled, let self, self.sessionRevision == revision else { return }
             var destination = self.isSearchActive || self.insightMode != .none ? self.normalColumns : self.columns
@@ -308,7 +316,7 @@ final class AppState: ObservableObject {
             switch result {
             case .success(let nodes):
                 destination[destinationIndex] =
-                    TreeColumn(parentURL: parent, level: level, items: TreeOrdering.sorted(nodes, by: self.sortOrder, ascending: self.sortAscending))
+                    TreeColumn(parentURL: parent, level: level, items: nodes)
             case .failure(let error):
                 destination[destinationIndex] =
                     TreeColumn(parentURL: parent, level: level, items: [], error: error.localizedDescription)
@@ -317,6 +325,7 @@ final class AppState: ObservableObject {
                 self.normalColumns = destination
                 if self.isSearchActive && self.query.isEmpty { self.columns = destination }
             } else { self.columns = destination }
+            if self.sortOrder != order || self.sortAscending != ascending { self.resortColumns() }
             if self.pendingFocusParent == parent,
                let first = destination[destinationIndex].items.first {
                 self.pendingFocusParent = nil
@@ -479,6 +488,7 @@ final class AppState: ObservableObject {
             selectedPath = normalSelectedPath
             normalFocusedNode = nil
             normalSelectedPath = []
+            resortColumns()
         } else { dismiss() }
     }
 
@@ -489,19 +499,24 @@ final class AppState: ObservableObject {
         let revision = sessionRevision
         let hidden = settings.includeHidden
         let excluded = settings.exclusionPredicate()
+        let order = sortOrder
+        let ascending = sortAscending
         let source = isSearchActive || insightMode != .none ? normalColumns : columns
         refreshTask = Task { [weak self] in
             var updated: [TreeColumn] = []
             for column in source {
                 guard FileManager.default.fileExists(atPath: column.parentURL.path) else { break }
                 let result = await Task.detached(priority: .utility) {
-                    Result { try DirectoryReader.contents(of: column.parentURL, includeHidden: hidden).filter { !excluded($0.url) } }
+                    Result {
+                        let nodes = try DirectoryReader.contents(of: column.parentURL, includeHidden: hidden).filter { !excluded($0.url) }
+                        return TreeOrdering.sorted(nodes, by: order, ascending: ascending)
+                    }
                 }.value
                 guard !Task.isCancelled, let self, self.sessionRevision == revision else { return }
                 switch result {
                 case .success(let nodes):
                     updated.append(TreeColumn(parentURL: column.parentURL, level: column.level,
-                                              items: TreeOrdering.sorted(nodes, by: self.sortOrder, ascending: self.sortAscending)))
+                                              items: nodes))
                 case .failure(let error):
                     updated.append(TreeColumn(parentURL: column.parentURL, level: column.level,
                                               items: [], error: error.localizedDescription))
@@ -510,6 +525,7 @@ final class AppState: ObservableObject {
             guard !Task.isCancelled, let self, self.sessionRevision == revision else { return }
             if self.isSearchActive || self.insightMode != .none { self.normalColumns = updated }
             else { withAnimation { self.columns = updated } }
+            if self.sortOrder != order || self.sortAscending != ascending { self.resortColumns() }
             if let focused = self.focusedNode, !FileManager.default.fileExists(atPath: focused.url.path) {
                 self.focusedNode = nil
                 self.preview = nil
@@ -545,6 +561,7 @@ final class AppState: ObservableObject {
         sessionRevision += 1
         actions.cancelChecksum()
         insightsTask?.cancel()
+        orderingTask?.cancel()
         insights = nil
         insightMode = .none
         isPinned = false

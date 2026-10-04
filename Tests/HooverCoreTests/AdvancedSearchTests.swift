@@ -57,6 +57,8 @@ final class AdvancedSearchTests: XCTestCase {
         XCTAssertTrue(result.matches[0].record.node.isSymbolicLink)
         XCTAssertEqual(result.matches[0].record.depth, 3)
         XCTAssertEqual(result.visibleIDs, Set(records.prefix(4).map(\.node.id)))
+        let unicode = [record("", folder: true), record("Café Files", folder: true), record("Café Files/code.swift")]
+        XCTAssertEqual(try AdvancedSearch.search(query: "path:\"cafe files\"", records: unicode).matches.count, 2)
     }
 
     func testKindsAlternativesFileUmbrellaExtensionsAndCompoundArchiveExtension() throws {

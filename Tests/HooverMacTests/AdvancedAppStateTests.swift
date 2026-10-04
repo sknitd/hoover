@@ -82,6 +82,44 @@ final class AdvancedAppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testLargeAsyncOrderingCompletesAndCannotReplaceNewWorkspace() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let first = try fixture.folder("First")
+        for index in 0..<550 {
+            _ = try fixture.file("First/Item-\(index).txt", bytes: index + 1)
+        }
+        let second = try fixture.folder("Second")
+        let target = try fixture.file("Second/Only.txt", bytes: 2)
+        fixture.state.openWorkspace(first)
+        try await waitUntil("Large real folder browsing completes") {
+            !fixture.state.isIndexing && fixture.state.columns.first?.items.count == 550
+        }
+        fixture.state.setSortOrder(.size)
+        fixture.state.setAscending(false)
+        try await waitUntil("Asynchronous ordering publishes the requested descending sizes") {
+            fixture.state.columns.first?.items.first?.name == "Item-549.txt"
+        }
+        let sizes = try XCTUnwrap(fixture.state.columns.first).items.compactMap(\.size)
+        XCTAssertEqual(sizes, Array(stride(from: Int64(550), through: 1, by: -1)))
+        XCTAssertEqual(fixture.state.rootURL, first)
+
+        // Supersede another large ordering request before its detached worker
+        // can publish. No real application or Finder focus is asserted.
+        fixture.state.setSortOrder(.name)
+        fixture.state.setAscending(true)
+        fixture.state.openWorkspace(second)
+        try await waitUntil("The newer workspace publishes its own real child") {
+            !fixture.state.isIndexing && fixture.state.columns.first?.items.map(\.url) == [target]
+        }
+        try await Task.sleep(nanoseconds: 80_000_000)
+        XCTAssertEqual(fixture.state.rootURL, second)
+        XCTAssertEqual(fixture.state.columns.first?.parentURL, second)
+        XCTAssertEqual(fixture.state.columns.first?.items.map(\.url), [target])
+        XCTAssertTrue(fixture.state.columns.allSatisfy { $0.parentURL.path.hasPrefix(second.path) })
+    }
+
+    @MainActor
     func testWorkspacePersistenceAndSavedQueryReuseCurrentRoot() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

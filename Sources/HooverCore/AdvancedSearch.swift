@@ -134,6 +134,7 @@ public enum AdvancedSearch {
         if parsed.textTerms.count == 1, parsed.excludedTerms.isEmpty, parsed.clauses.isEmpty {
             return TreeSearch.search(query: parsed.textTerms[0], records: records, fuzzy: fuzzy)
         }
+        let clauses = parsed.clauses.map { PreparedClause($0) }
         var candidates: [SearchMatch]
         if let term = parsed.textTerms.first {
             candidates = TreeSearch.search(query: term, records: records, fuzzy: fuzzy).matches
@@ -157,19 +158,23 @@ public enum AdvancedSearch {
         try candidates.removeAll { match in
             examined += 1
             if examined.isMultiple(of: 512) { try Task.checkCancellation() }
-            return parsed.clauses.contains { clause in
+            return clauses.contains { clause in
                 let passed = matches(clause.filter, record: match.record)
                 return clause.isExcluded ? passed : !passed
             }
         }
-        var comparisons = 0
-        try candidates.sort {
-            comparisons += 1
-            if comparisons.isMultiple(of: 2_048) { try Task.checkCancellation() }
-            if $0.rank != $1.rank { return $0.rank < $1.rank }
-            if $0.record.depth != $1.record.depth { return $0.record.depth < $1.record.depth }
-            if $0.record.normalizedName != $1.record.normalizedName { return $0.record.normalizedName < $1.record.normalizedName }
-            return $0.record.node.id < $1.record.node.id
+        // Filter-only queries have no relevance difference: every rank is zero.
+        // Keep their stable source order; the caller applies TreeOrdering.
+        if !parsed.textTerms.isEmpty {
+            var comparisons = 0
+            try candidates.sort {
+                comparisons += 1
+                if comparisons.isMultiple(of: 2_048) { try Task.checkCancellation() }
+                if $0.rank != $1.rank { return $0.rank < $1.rank }
+                if $0.record.depth != $1.record.depth { return $0.record.depth < $1.record.depth }
+                if $0.record.normalizedName != $1.record.normalizedName { return $0.record.normalizedName < $1.record.normalizedName }
+                return $0.record.node.id < $1.record.node.id
+            }
         }
         var parents: [String: IndexRecord] = [:]
         for (offset, record) in records.enumerated() {
@@ -187,23 +192,82 @@ public enum AdvancedSearch {
         return SearchResult(matches: candidates, visibleIDs: visible)
     }
 
-    private static func matches(_ filter: AdvancedSearchFilter, record: IndexRecord) -> Bool {
+    private enum PreparedFilter {
+        case kind(Set<FileKind>)
+        case extensions([[UInt8]])
+        case size(SizeConstraint)
+        case modified(ModifiedConstraint)
+        case path(PathKey)
+    }
+
+    private struct PreparedClause {
+        let filter: PreparedFilter
+        let isExcluded: Bool
+
+        init(_ clause: AdvancedSearchClause) {
+            isExcluded = clause.isExcluded
+            switch clause.filter {
+            case .kind(let kinds): filter = .kind(kinds)
+            case .extensions(let extensions): filter = .extensions(extensions.map { Array(("." + $0).utf8) })
+            case .size(let constraint): filter = .size(constraint)
+            case .modified(let constraint): filter = .modified(constraint)
+            case .path(let value): filter = .path(PathKey(value))
+            }
+        }
+    }
+
+    private struct PathKey {
+        let text: String
+        let bytes: [UInt8]
+        let isASCII: Bool
+
+        init(_ value: String) {
+            text = value
+            bytes = Array(value.utf8)
+            isASCII = bytes.allSatisfy { $0 < 128 }
+        }
+    }
+
+    private static func matches(_ filter: PreparedFilter, record: IndexRecord) -> Bool {
         switch filter {
         case .kind(let kinds):
             return kinds.contains(FileKind.classify(normalizedExtension: record.normalizedExtension,
                                                     isDirectory: record.node.isDirectory)) ||
                 (kinds.contains(.file) && !record.node.isDirectory)
-        case .extensions(let extensions):
-            return !record.node.isDirectory && extensions.contains {
-                record.normalizedName.hasSuffix("." + $0)
-            }
+        case .extensions(let suffixes):
+            guard !record.node.isDirectory else { return false }
+            return record.normalizedName.utf8.withContiguousStorageIfAvailable { bytes in
+                suffixes.contains { suffix in
+                    guard bytes.count >= suffix.count else { return false }
+                    let start = bytes.count - suffix.count
+                    for offset in suffix.indices where bytes[start + offset] != suffix[offset] { return false }
+                    return true
+                }
+            } ?? suffixes.contains { record.normalizedName.hasSuffix(String(decoding: $0, as: UTF8.self)) }
         case .size(let constraint):
             guard !record.node.isDirectory, let size = record.node.size, size >= 0 else { return false }
             return constraint.contains(size)
         case .modified(let constraint):
             return record.node.modified.map { constraint.contains($0) } ?? false
         case .path(let path):
-            return TreeSearch.normalize(record.relativePath).contains(path)
+            if path.isASCII, record.relativePath.utf8.allSatisfy({ $0 < 128 }) {
+                return record.relativePath.utf8.withContiguousStorageIfAvailable { bytes in
+                    guard !path.bytes.isEmpty else { return true }
+                    guard bytes.count >= path.bytes.count else { return false }
+                    for start in 0...(bytes.count - path.bytes.count) {
+                        var offset = 0
+                        while offset < path.bytes.count {
+                            let byte = bytes[start + offset]
+                            let folded = (65...90).contains(byte) ? byte + 32 : byte
+                            if folded != path.bytes[offset] { break }
+                            offset += 1
+                        }
+                        if offset == path.bytes.count { return true }
+                    }
+                    return false
+                } ?? TreeSearch.normalize(record.relativePath).contains(path.text)
+            }
+            return TreeSearch.normalize(record.relativePath).contains(path.text)
         }
     }
 

@@ -106,8 +106,7 @@ enum AdvancedFileOperations {
         let path = url.standardizedFileURL.path
         let scope = root.standardizedFileURL.path
         guard within(path, root: scope),
-              within(url.resolvingSymlinksInPath().standardizedFileURL.path,
-                     root: root.resolvingSymlinksInPath().standardizedFileURL.path) else {
+              within(try canonicalPath(url), root: try canonicalPath(root)) else {
             throw AdvancedFileActionError.outsideRoot
         }
         if path == scope { return "." }
@@ -190,6 +189,35 @@ enum AdvancedFileOperations {
         path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
     }
 
+    /// Resolve each existing ancestor, including aliases preceding a missing
+    /// leaf. Foundation's resolvingSymlinksInPath can leave those ancestors
+    /// unresolved when the complete path does not exist. Walking components
+    /// also preserves the filesystem meaning of `alias/..` before normalizing.
+    private static func canonicalPath(_ url: URL) throws -> String {
+        var resolved = "/"
+        for component in url.path.split(separator: "/") {
+            if component == "." { continue }
+            if component == ".." {
+                resolved = URL(fileURLWithPath: resolved).deletingLastPathComponent().path
+                continue
+            }
+            let candidate = (resolved == "/" ? "/" : resolved + "/") + component
+            var item = stat()
+            if lstat(candidate, &item) == 0 {
+                // A dangling alias or unreadable ancestor must not become an
+                // apparently safe missing path; fail unless realpath succeeds.
+                guard let physical = realpath(candidate, nil) else { throw posixError() }
+                resolved = String(cString: physical)
+                free(physical)
+            } else {
+                let code = errno
+                guard code == ENOENT else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(code)) }
+                resolved = candidate
+            }
+        }
+        return resolved
+    }
+
     private static func exclusiveMove(from source: URL, to destination: URL) throws {
         guard renamex_np(source.path, destination.path, UInt32(RENAME_EXCL)) == 0 else {
             if errno == EEXIST { throw AdvancedFileActionError.destinationExists }
@@ -199,8 +227,10 @@ enum AdvancedFileOperations {
 
     private static func temporaryDirectory(in parent: URL) throws -> URL {
         var template = parent.appendingPathComponent(".hoover-copy-XXXXXX").path.utf8CString
-        guard mkdtemp(&template) != nil else { throw posixError() }
-        let path = template.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+        let path = try template.withUnsafeMutableBufferPointer { buffer -> String in
+            guard let base = buffer.baseAddress, mkdtemp(base) != nil else { throw posixError() }
+            return String(cString: base)
+        }
         return URL(fileURLWithPath: path, isDirectory: true)
     }
 
