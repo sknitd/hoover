@@ -29,7 +29,8 @@ struct XRayView: View {
                                     accent: settings.accentColor, searching: state.isSearchActive && !state.query.isEmpty)
                         .allowsHitTesting(false)
                 }
-                canvas(leading: leading, top: top, height: max(180, geometry.size.height - top - 88))
+                canvas(leading: leading, top: top, height: max(180, geometry.size.height - top - 112),
+                       width: geometry.size.width, highlights: queryHighlights)
                 if state.isSearchActive {
                     ScopedSearchBar(state: state, settings: settings)
                         .frame(width: min(530, max(300, geometry.size.width - 48)))
@@ -51,6 +52,9 @@ struct XRayView: View {
                             .padding(12).hooverGlass(settings, radius: 12)
                             .interactionRegion(in: "XRaySpace")
                     }
+                    WorkspaceBreadcrumbView(state: state, settings: settings)
+                        .frame(width: min(540, max(240, geometry.size.width - 48)))
+                        .interactionRegion(in: "XRaySpace")
                     controlPill
                 }
                 .padding(.trailing, 24).padding(.bottom, 18)
@@ -66,7 +70,17 @@ struct XRayView: View {
         .accessibilityLabel("Hoover Folder X-Ray")
     }
 
-    private func canvas(leading: CGFloat, top: CGFloat, height: CGFloat) -> some View {
+    private var queryHighlights: [String] {
+        guard state.isSearchActive, settings.highlightMatches,
+              let parsed = try? AdvancedSearch.parse(query: state.query) else { return [] }
+        var terms = parsed.textTerms
+        for clause in parsed.clauses where !clause.isExcluded {
+            if case .extensions(let extensions) = clause.filter { terms += extensions.sorted().map { "." + $0 } }
+        }
+        return terms
+    }
+
+    private func canvas(leading: CGFloat, top: CGFloat, height: CGFloat, width: CGFloat, highlights: [String]) -> some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: true) {
                 LazyHStack(alignment: .top, spacing: 48) {
@@ -80,7 +94,7 @@ struct XRayView: View {
                         .hooverGlass(settings).interactionRegion(in: "XRaySpace")
                     }
                     ForEach(state.columns) { column in
-                        TreeColumnView(state: state, settings: settings, column: column, availableHeight: height)
+                        TreeColumnView(state: state, settings: settings, column: column, availableHeight: height, highlights: highlights)
                             .frame(width: settings.cardDensity == "Compact" ? 276 : 300)
                             .id(column.id)
                             .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .leading)))
@@ -93,6 +107,13 @@ struct XRayView: View {
                 guard settings.autoScroll, let last = ids.last else { return }
                 withAnimation(.spring(response: 0.40, dampingFraction: 0.9)) { proxy.scrollTo(last, anchor: .trailing) }
             }
+            .onChange(of: state.keyboardFocusRevision) { _ in
+                guard let id = state.focusedNode?.id else { return }
+                // Hover focus remains stable; only an offscreen keyboard target needs scrolling.
+                if let frame = nodeFrames[id], frame.minX >= 0, frame.maxX <= width { return }
+                guard let column = state.columns.first(where: { $0.items.contains { $0.id == id } }) else { return }
+                withAnimation(.easeOut(duration: 0.16)) { proxy.scrollTo(column.id, anchor: .trailing) }
+            }
         }
     }
 
@@ -103,6 +124,8 @@ struct XRayView: View {
                 Text(state.isSearchActive ? "Filter Active" : "Folder X-Ray")
                     .font(.system(size: 11, weight: .medium)).foregroundStyle(settings.accentColor)
             }
+            Rectangle().fill(Color.primary.opacity(0.13)).frame(width: 1, height: 18)
+            WorkspaceToolsView(state: state)
             Rectangle().fill(Color.primary.opacity(0.13)).frame(width: 1, height: 18)
             Button { state.beginSearch() } label: { ShortcutHint(key: "⌘ F", label: "Filter Tree") }
                 .buttonStyle(.plain).help("Filter this root folder’s subtree")
@@ -126,8 +149,12 @@ private struct TreeColumnView: View {
     @ObservedObject var settings: HooverSettings
     let column: TreeColumn
     let availableHeight: CGFloat
+    let highlights: [String]
+    @State private var viewport = CGRect.zero
+    @State private var cardFrames: [String: CGRect] = [:]
 
     private var title: String {
+        if state.insightMode != .none { return state.insightMode.title.uppercased() }
         if column.level == 1 { return "DIRECT TREE" }
         if state.isSearchActive, !state.query.isEmpty, column.parentURL == state.rootURL {
             return "MATCHING BRANCHES"
@@ -135,18 +162,31 @@ private struct TreeColumnView: View {
         return column.parentURL.lastPathComponent.uppercased()
     }
 
+    private var emptyText: (title: String, subtitle: String) {
+        switch state.insightMode {
+        case .largest: return ("No files with a known size", "Files appear here when size metadata is available.")
+        case .recent: return ("No modification dates available", "Files appear here when modification metadata is available.")
+        case .duplicateNames: return ("No same-name files", "No repeated filenames in the indexed portion of this root.")
+        case .none:
+            return state.isSearchActive && !state.query.isEmpty
+                ? ("No matches", "Try another name or extension.")
+                : ("Empty folder", "Nothing inside this folder yet.")
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 7) {
                 Circle().fill(settings.accentColor).frame(width: 5, height: 5)
-                Text("LEVEL \(column.level) · \(title)")
+                Text("\(state.insightMode == .none ? "LEVEL \(column.level)" : "ROOT") · \(title)")
                     .font(.system(size: 10, weight: .medium, design: .monospaced)).tracking(1.6)
                     .foregroundStyle(settings.accentColor.opacity(column.level == 1 ? 0.95 : 0.72))
                     .lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
+                if column.isLoading && !column.items.isEmpty { ProgressView().controlSize(.mini) }
                 Text("\(column.items.count)").font(.system(size: 9, design: .monospaced)).foregroundStyle(.tertiary)
             }.padding(.horizontal, 4)
-            if column.isLoading {
+            if column.isLoading && column.items.isEmpty {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
                     Text("Reading folder…").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -156,25 +196,42 @@ private struct TreeColumnView: View {
             } else if let error = column.error {
                 emptyState(title: "Access unavailable", subtitle: error, icon: "lock")
             } else if column.items.isEmpty {
-                emptyState(title: state.isSearchActive && !state.query.isEmpty ? "No matches" : "Empty folder",
-                           subtitle: state.isSearchActive ? "Try another name or extension." : "Nothing inside this folder yet.",
-                           icon: "folder")
+                emptyState(title: emptyText.title, subtitle: emptyText.subtitle,
+                           icon: state.insightMode == .none ? "folder" : "chart.bar.xaxis")
             } else {
-                ScrollView(.vertical, showsIndicators: false) {
-                    LazyVStack(spacing: settings.cardDensity == "Compact" ? 8 : 12) {
-                        ForEach(column.items) { node in
-                            XRayNodeCard(state: state, settings: settings, node: node, level: column.level)
-                                .background {
-                                    GeometryReader { geometry in
-                                        Color.clear.preference(key: NodeFramePreference.self,
-                                                               value: [node.id: geometry.frame(in: .named("XRaySpace"))])
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        LazyVStack(spacing: settings.cardDensity == "Compact" ? 8 : 12) {
+                            ForEach(column.items) { node in
+                                XRayNodeCard(state: state, settings: settings, node: node, level: column.level, highlights: highlights)
+                                    .id(node.id)
+                                    .background {
+                                        GeometryReader { geometry in
+                                            Color.clear.preference(key: NodeFramePreference.self,
+                                                                   value: [node.id: geometry.frame(in: .named("XRaySpace"))])
+                                        }
                                     }
-                                }
-                                .interactionRegion(in: "XRaySpace")
-                                .transition(.opacity.combined(with: .scale(scale: 0.94)))
+                                    .interactionRegion(in: "XRaySpace")
+                                    .transition(.opacity.combined(with: .scale(scale: 0.94)))
+                            }
+                        }.padding(8)
+                    }
+                    .frame(maxHeight: max(130, availableHeight - 30))
+                    .background {
+                        GeometryReader { geometry in
+                            Color.clear
+                                .onAppear { viewport = geometry.frame(in: .named("XRaySpace")) }
+                                .onChange(of: geometry.frame(in: .named("XRaySpace"))) { viewport = $0 }
                         }
-                    }.padding(8)
-                }.frame(maxHeight: max(130, availableHeight - 30))
+                    }
+                    .onPreferenceChange(NodeFramePreference.self) { cardFrames = $0 }
+                    .onChange(of: state.keyboardFocusRevision) { _ in
+                        guard let id = state.focusedNode?.id else { return }
+                        if let frame = cardFrames[id], frame.minY >= viewport.minY, frame.maxY <= viewport.maxY { return }
+                        guard column.items.contains(where: { $0.id == id }) else { return }
+                        withAnimation(.easeOut(duration: 0.16)) { proxy.scrollTo(id, anchor: .center) }
+                    }
+                }
             }
         }
         .animation(.easeOut(duration: 0.22), value: column.items.map(\.id))
@@ -196,12 +253,23 @@ private struct XRayNodeCard: View {
     @ObservedObject var settings: HooverSettings
     let node: FileNode
     let level: Int
+    let highlights: [String]
     @State private var isHovered = false
 
     private var active: Bool { state.focusedNode?.id == node.id || state.selectedPath.contains(node.id) }
     private var isFocused: Bool { state.focusedNode?.id == node.id }
     private var preview: FileMetadata? { isFocused && settings.showPreviews && !node.isDirectory ? state.preview : nil }
     private var textSize: CGFloat { settings.textSize == "Large" ? 14 : settings.textSize == "Compact" ? 11 : 12 }
+
+    private var insightLocation: String? {
+        guard state.insightMode != .none, let root = state.rootURL else { return nil }
+        let parent = node.url.deletingLastPathComponent().standardizedFileURL.path
+        let scope = root.standardizedFileURL.path
+        if parent == scope { return "Root folder" }
+        let prefix = scope.hasSuffix("/") ? scope : scope + "/"
+        guard parent.hasPrefix(prefix) else { return nil }
+        return String(parent.dropFirst(prefix.count))
+    }
 
     private var detail: String {
         var parts = [node.isDirectory ? "Folder" : (node.url.pathExtension.isEmpty ? "File" : node.url.pathExtension.uppercased())]
@@ -219,10 +287,17 @@ private struct XRayNodeCard: View {
             HStack(spacing: 11) {
                 FileGlyph(node: node, size: settings.cardDensity == "Compact" ? 27 : 34)
                 VStack(alignment: .leading, spacing: 4) {
-                    HighlightedName(name: node.name, query: state.query, accent: settings.accentColor,
+                    HighlightedName(name: node.name, query: highlights.first(where: {
+                        node.name.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+                    }) ?? "", accent: settings.accentColor,
                                     enabled: state.isSearchActive && settings.highlightMatches)
                         .font(.system(size: textSize, weight: .semibold))
                     Text(detail).font(.system(size: textSize - 2)).foregroundStyle(.secondary).lineLimit(1)
+                    if let location = insightLocation {
+                        Label(location, systemImage: "folder")
+                            .font(.system(size: 9, design: .monospaced)).foregroundStyle(settings.accentColor.opacity(0.7))
+                            .lineLimit(1).truncationMode(.middle)
+                    }
                 }
                 Spacer(minLength: 0)
                 if settings.showTrashIcons {
@@ -264,7 +339,7 @@ private struct XRayNodeCard: View {
         .onTapGesture(count: 2) { state.open(node) }
         .onTapGesture { state.select(node, level: level) }
         .onDrag { NSItemProvider(contentsOf: node.url) ?? NSItemProvider(object: node.url as NSURL) }
-        .contextMenu { NodeContextMenu(node: node, actions: state.actions, open: { state.open(node) }) }
+        .contextMenu { NodeContextMenu(node: node, actions: state.actions, rootURL: state.rootURL, open: { state.open(node) }) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(node.name), \(detail)")
         .accessibilityHint(node.isDirectory ? "Hover to explore. Double-click to open a new Finder window." : "Double-click to open in the default application.")
@@ -275,6 +350,7 @@ private struct XRayNodeCard: View {
 struct NodeContextMenu: View {
     let node: FileNode
     let actions: FileActions
+    var rootURL: URL? = nil
     let open: () -> Void
 
     var body: some View {
@@ -283,10 +359,26 @@ struct NodeContextMenu: View {
         Button("Quick Look") { actions.quickLook(node) }
         Button("Reveal in Finder") { actions.reveal(node) }
         Button("Get Info") { actions.getInfo(node) }
+        Button("Share…") { actions.share(node) }
         Divider()
-        Button("Copy") { actions.copy(node) }
-        Button("Copy Path") { actions.copyPath(node) }
-        Button("Copy Filename") { actions.copyName(node) }
+        Button("Rename…") { actions.rename(node) }
+        Button("Duplicate") { actions.duplicate(node) }
+        if node.isDirectory {
+            Button("New Folder Here…") { actions.newFolder(in: node.url) }
+        }
+        Button("Edit Finder Tags…") { actions.editTags(node) }
+        Divider()
+        Menu("Copy") {
+            Button("File") { actions.copy(node) }
+            Button("Path") { actions.copyPath(node) }
+            Button("Filename") { actions.copyName(node) }
+            Button("File URL") { actions.copyFileURL(node) }
+            if let rootURL {
+                Button("Relative Path") { actions.copyRelativePath(node, root: rootURL) }
+            }
+            Button("SHA-256 Checksum") { actions.copyChecksum(node) }.disabled(node.isDirectory)
+        }
+        Button("Open in Terminal") { actions.openTerminal(node) }
         Divider()
         Button("Move to Bin") { actions.moveToTrash(node) }
     }
@@ -306,15 +398,19 @@ private struct ScopedSearchBar: View {
                 .lineLimit(1).truncationMode(.middle).frame(maxWidth: 140)
                 .padding(.horizontal, 7).padding(.vertical, 5)
                 .background(settings.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 5))
-            TextField("Filter this tree", text: Binding(get: { state.query }, set: { state.updateQuery($0) }))
+            TextField("Name or ext:swift", text: Binding(get: { state.query }, set: { state.updateQuery($0) }))
                 .textFieldStyle(.plain).font(.system(size: 12, design: .monospaced))
                 .focused($focused).accessibilityLabel("Search within the root folder")
+                .help(AdvancedSearch.queryHelp)
             if !state.query.isEmpty {
                 Text("\(state.searchMatchCount) \(state.searchMatchCount == 1 ? "match" : "matches")")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(settings.accentColor).lineLimit(1)
                     .padding(.horizontal, 8).padding(.vertical, 5)
                     .background(settings.accentColor.opacity(0.13), in: Capsule())
+                Button { state.saveCurrentSearch() } label: {
+                    Image(systemName: "bookmark").font(.system(size: 11))
+                }.buttonStyle(.plain).foregroundStyle(settings.accentColor).help("Save this filter")
             }
             Button { state.escape() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .medium)) }
                 .buttonStyle(.plain).foregroundStyle(.secondary).help("Clear filter (Esc)")

@@ -236,12 +236,12 @@ final class FileActions: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         }
     }
 
-    private func beginOpening() {
+    func beginOpening() {
         pendingOpenActions += 1
         isOpening = true
     }
 
-    private func endOpening() {
+    func endOpening() {
         pendingOpenActions = max(0, pendingOpenActions - 1)
         isOpening = pendingOpenActions != 0
     }

@@ -8,7 +8,9 @@ import SwiftUI
 final class AppState: ObservableObject {
     @Published var columns: [TreeColumn] = []
     @Published var rootURL: URL?
-    @Published var focusedNode: FileNode?
+    @Published var focusedNode: FileNode? {
+        didSet { if focusedNode?.id != oldValue?.id { actions.cancelChecksum() } }
+    }
     @Published var preview: FileMetadata?
     @Published var selectedPath: Set<String> = []
     @Published var isSearchActive = false
@@ -18,14 +20,29 @@ final class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var hoverProgress = 0.0
 
+    @Published var keyboardFocusRevision = 0
+    @Published var isPinned = false
+    @Published var sortOrder: NodeSortOrder = .name
+    @Published var sortAscending = true
+    @Published var insightMode: InsightMode = .none
+    @Published var insights: TreeInsightSummary?
+    @Published var diagnosticReason = "Waiting for a Finder observation."
+    @Published var diagnosticItem = "No resolved item"
+    @Published var diagnosticFinderOwned = false
+    @Published var diagnosticTimestamp: Date?
+    let workspace: WorkspaceStore
+    var searchMatches: [FileNode] = []
+    var pendingFocusParent: URL?
+    var insightsTask: Task<Void, Never>?
+
     let settings: HooverSettings
     let actions: FileActions
     let tracker = FinderTracker()
     private let metadata = MetadataService()
     private let indexer = RootIndexer()
     private var hoverMachine = HoverStateMachine()
-    private var indexRecords: [IndexRecord] = []
-    private var normalColumns: [TreeColumn] = []
+    var indexRecords: [IndexRecord] = []
+    var normalColumns: [TreeColumn] = []
     private var normalFocusedNode: FileNode?
     private var normalSelectedPath: Set<String> = []
     private var indexingTask: Task<Void, Never>?
@@ -38,7 +55,7 @@ final class AppState: ObservableObject {
     private var rootWatcher: RootWatcher?
     private var subscriptions = Set<AnyCancellable>()
     private var settingsRevision = 0
-    private var sessionRevision = 0
+    var sessionRevision = 0
     private var previewRevision = 0
     private var filterRevision = 0
     private var appActivationObserver: NSObjectProtocol?
@@ -53,13 +70,18 @@ final class AppState: ObservableObject {
     lazy var overlay = OverlayController(state: self)
 
     init(settings: HooverSettings,
+         workspace: WorkspaceStore? = nil,
          monotonicTime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.settings = settings
+        self.workspace = workspace ?? WorkspaceStore()
         self.monotonicTime = monotonicTime
         actions = FileActions(settings: settings)
         actions.onDismiss = { [weak self] in self?.dismiss(restoreFinder: false) }
         actions.onChanged = { [weak self] _ in self?.refresh() }
         actions.onError = { [weak self] message in self?.errorMessage = message }
+        self.workspace.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &subscriptions)
         tracker.onObservation = { [weak self] observation in self?.observeFinder(observation) }
         settings.objectWillChange.sink { [weak self] _ in
             guard let self else { return }
@@ -83,13 +105,13 @@ final class AppState: ObservableObject {
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   app.bundleIdentifier != "com.apple.finder", app.processIdentifier != getpid() else { return }
             Task { @MainActor [weak self] in
-                guard let self, !self.actions.isOpening else { return }
+                guard let self, !self.actions.isOpening, !self.isPinned else { return }
                 self.dismiss(restoreFinder: false)
             }
         }
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, self.settings.clickOutsideDismiss, self.overlay.isVisible,
+                guard let self, !self.isPinned, self.settings.clickOutsideDismiss, self.overlay.isVisible,
                       !self.overlay.containsPointer else { return }
                 self.dismiss(restoreFinder: false)
             }
@@ -119,8 +141,10 @@ final class AppState: ObservableObject {
     }
 
     func observeFinder(_ observation: FinderObservation) {
+        updateDiagnostics(observation)
         guard settings.enabled else { hoverMachine.reset(); return }
         if actions.isOpening { setHoverProgress(0); return }
+        if isPinned, overlay.isVisible { setHoverProgress(0); return }
         if let source = sourceWindowID, let windows = observation.liveWindowIDs, !windows.contains(source) {
             dismiss()
             return
@@ -174,9 +198,10 @@ final class AppState: ObservableObject {
         if rootURL == nil, overlay.isVisible, node == nil, !overlay.containsPointer { dismiss() }
     }
 
-    private func activateFolder(_ url: URL, anchor: CGRect) {
+    func activateFolder(_ url: URL, anchor: CGRect) {
         endSession()
         rootURL = url.standardizedFileURL
+        workspace.recordRoot(url)
         selectedPath = [url.standardizedFileURL.path]
         overlay.showFolder(anchor: anchor)
         loadColumn(parent: url, level: 1)
@@ -205,7 +230,7 @@ final class AppState: ObservableObject {
         }
         previewTask?.cancel()
         preview = nil
-        guard !isSearchActive || query.isEmpty else { return }
+        guard insightMode == .none, !isSearchActive || query.isEmpty else { return }
         let revision = sessionRevision
         let delay = settings.innerDelay
         innerHoverTask = Task { [weak self] in
@@ -219,7 +244,7 @@ final class AppState: ObservableObject {
         innerHoverTask?.cancel()
         focusedNode = node
         if node.isDirectory {
-            if !isSearchActive || query.isEmpty { expand(node, level: level) }
+            if insightMode == .none, !isSearchActive || query.isEmpty { expand(node, level: level) }
         } else {
             loadPreview(node)
             updateActivePath(node.url)
@@ -252,7 +277,7 @@ final class AppState: ObservableObject {
         loadColumn(parent: node.url, level: level + 1)
     }
 
-    private func updateActivePath(_ url: URL) {
+    func updateActivePath(_ url: URL) {
         guard let root = rootURL else { return }
         var path = url.standardizedFileURL
         var ids = Set<String>()
@@ -278,26 +303,32 @@ final class AppState: ObservableObject {
                 Result { try DirectoryReader.contents(of: parent, includeHidden: hidden).filter { !excluded($0.url) } }
             }.value
             guard !Task.isCancelled, let self, self.sessionRevision == revision else { return }
-            var destination = self.isSearchActive ? self.normalColumns : self.columns
+            var destination = self.isSearchActive || self.insightMode != .none ? self.normalColumns : self.columns
             guard let destinationIndex = destination.firstIndex(where: { $0.level == level && $0.parentURL == parent }) else { return }
             switch result {
             case .success(let nodes):
                 destination[destinationIndex] =
-                    TreeColumn(parentURL: parent, level: level, items: nodes)
+                    TreeColumn(parentURL: parent, level: level, items: TreeOrdering.sorted(nodes, by: self.sortOrder, ascending: self.sortAscending))
             case .failure(let error):
                 destination[destinationIndex] =
                     TreeColumn(parentURL: parent, level: level, items: [], error: error.localizedDescription)
             }
-            if self.isSearchActive {
+            if self.isSearchActive || self.insightMode != .none {
                 self.normalColumns = destination
-                if self.query.isEmpty { self.columns = destination }
+                if self.isSearchActive && self.query.isEmpty { self.columns = destination }
             } else { self.columns = destination }
+            if self.pendingFocusParent == parent,
+               let first = destination[destinationIndex].items.first {
+                self.pendingFocusParent = nil
+                self.focusForKeyboard(first)
+            }
             self.installWatchers()
         }
     }
 
     func beginSearch() {
         guard rootURL != nil else { return }
+        if insightMode != .none { resetInsight() }
         if !isSearchActive {
             normalColumns = columns
             normalFocusedNode = focusedNode
@@ -321,6 +352,8 @@ final class AppState: ObservableObject {
         let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if value.isEmpty {
             searchMatchCount = 0
+            searchMatches = []
+            errorMessage = nil
             if !normalColumns.isEmpty { columns = normalColumns }
             return
         }
@@ -331,16 +364,29 @@ final class AppState: ObservableObject {
         filterTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 20_000_000)
             guard !Task.isCancelled else { return }
-            let (result, levels) = await Task.detached(priority: .userInitiated) {
-                let result = TreeSearch.search(query: value, records: records, fuzzy: fuzzy)
-                return (result, searchColumns(records: records, result: result, root: root))
+            let sort = self?.sortOrder ?? .name
+            let ascending = self?.sortAscending ?? true
+            let outcome: Result<(SearchResult, [TreeColumn]), Error> = await Task.detached(priority: .userInitiated) {
+                Result {
+                    let result = try AdvancedSearch.search(query: value, records: records, fuzzy: fuzzy)
+                    return (result, searchColumns(records: records, result: result, root: root,
+                                                  sort: sort, ascending: ascending))
+                }
             }.value
             guard !Task.isCancelled, let self, self.sessionRevision == revision,
                   self.filterRevision == queryRevision, self.isSearchActive else { return }
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+            switch outcome {
+            case .success(let (result, levels)):
+                self.errorMessage = nil
                 self.columns = levels
                 self.searchMatchCount = result.matches.count
+                self.searchMatches = result.matches.map { $0.record.node }
                 self.selectedPath = result.visibleIDs
+            case .failure(let error):
+                self.errorMessage = error.localizedDescription
+                self.columns = []
+                self.searchMatches = []
+                self.searchMatchCount = 0
             }
         }
     }
@@ -350,6 +396,8 @@ final class AppState: ObservableObject {
         guard let root = rootURL else { return }
         let revision = sessionRevision
         indexRecords = []
+        insights = nil
+        insightsTask?.cancel()
         isIndexing = true
         lastIndexSearchTime = 0
         let stream = indexer.stream(root: root, includeHidden: settings.includeHidden,
@@ -373,11 +421,12 @@ final class AppState: ObservableObject {
             }
             guard !Task.isCancelled, let self, self.sessionRevision == revision else { return }
             self.isIndexing = false
+            self.updateInsights()
             if self.isSearchActive { self.applySearch() }
         }
     }
 
-    private func loadPreview(_ node: FileNode) {
+    func loadPreview(_ node: FileNode) {
         previewTask?.cancel()
         metadata.cancel()
         previewRevision += 1
@@ -414,12 +463,15 @@ final class AppState: ObservableObject {
     }
 
     func escape() {
+        if insightMode != .none { resetInsight(); return }
         if isSearchActive {
             filterTask?.cancel()
             filterRevision += 1
             isSearchActive = false
             query = ""
             searchMatchCount = 0
+            searchMatches = []
+            errorMessage = nil
             columns = normalColumns
             normalColumns = []
             focusedNode = normalFocusedNode
@@ -436,7 +488,7 @@ final class AppState: ObservableObject {
         let revision = sessionRevision
         let hidden = settings.includeHidden
         let excluded = settings.exclusionPredicate()
-        let source = isSearchActive ? normalColumns : columns
+        let source = isSearchActive || insightMode != .none ? normalColumns : columns
         refreshTask = Task { [weak self] in
             var updated: [TreeColumn] = []
             for column in source {
@@ -448,14 +500,14 @@ final class AppState: ObservableObject {
                 switch result {
                 case .success(let nodes):
                     updated.append(TreeColumn(parentURL: column.parentURL, level: column.level,
-                                              items: nodes))
+                                              items: TreeOrdering.sorted(nodes, by: self.sortOrder, ascending: self.sortAscending)))
                 case .failure(let error):
                     updated.append(TreeColumn(parentURL: column.parentURL, level: column.level,
                                               items: [], error: error.localizedDescription))
                 }
             }
             guard !Task.isCancelled, let self, self.sessionRevision == revision else { return }
-            if self.isSearchActive { self.normalColumns = updated }
+            if self.isSearchActive || self.insightMode != .none { self.normalColumns = updated }
             else { withAnimation { self.columns = updated } }
             if let focused = self.focusedNode, !FileManager.default.fileExists(atPath: focused.url.path) {
                 self.focusedNode = nil
@@ -469,7 +521,7 @@ final class AppState: ObservableObject {
     private func installWatchers() {
         watchers.forEach { $0.stop() }
         watchers = []
-        let current = isSearchActive ? normalColumns : columns
+        let current = isSearchActive || insightMode != .none ? normalColumns : columns
         for url in Set(current.map(\.parentURL)) {
             let watcher = DirectoryWatcher(url: url) { [weak self] in self?.refresh() }
             watcher.start()
@@ -490,6 +542,13 @@ final class AppState: ObservableObject {
 
     private func endSession() {
         sessionRevision += 1
+        actions.cancelChecksum()
+        insightsTask?.cancel()
+        insights = nil
+        insightMode = .none
+        isPinned = false
+        searchMatches = []
+        pendingFocusParent = nil
         indexingTask?.cancel()
         filterTask?.cancel()
         innerHoverTask?.cancel()
@@ -521,7 +580,7 @@ final class AppState: ObservableObject {
         lastInnerHover = nil
     }
 
-    private func isWithinRoot(_ url: URL, root: URL) -> Bool {
+    func isWithinRoot(_ url: URL, root: URL) -> Bool {
         let path = url.standardizedFileURL.path
         let scope = root.standardizedFileURL.path
         return path == scope || path.hasPrefix(scope.hasSuffix("/") ? scope : scope + "/")
@@ -529,17 +588,13 @@ final class AppState: ObservableObject {
 }
 
 /// Layout preparation stays on the search worker, including large-result sorting.
-private func searchColumns(records: [IndexRecord], result: SearchResult, root: URL) -> [TreeColumn] {
+private func searchColumns(records: [IndexRecord], result: SearchResult, root: URL, sort: NodeSortOrder = .name, ascending: Bool = true) -> [TreeColumn] {
     let surviving = records.filter { $0.depth > 0 && result.visibleIDs.contains($0.node.id) }
     let grouped = Dictionary(grouping: surviving, by: \.depth)
     return grouped.keys.sorted().map { depth in
-        let group = grouped[depth]!.sorted {
-            if $0.node.isDirectory != $1.node.isDirectory { return $0.node.isDirectory }
-            if $0.normalizedName != $1.normalizedName { return $0.normalizedName < $1.normalizedName }
-            return $0.node.id < $1.node.id
-        }
+        let group = grouped[depth]!
         let parents = Set(group.compactMap(\.parentID))
         let parent = parents.count == 1 ? URL(fileURLWithPath: parents.first!) : root
-        return TreeColumn(parentURL: parent, level: depth, items: group.map(\.node))
+        return TreeColumn(parentURL: parent, level: depth, items: TreeOrdering.sorted(group.map(\.node), by: sort, ascending: ascending))
     }
 }
