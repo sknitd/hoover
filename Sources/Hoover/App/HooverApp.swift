@@ -52,6 +52,19 @@ final class HooverAppDelegate: NSResponder, NSApplicationDelegate, NSMenuDelegat
         state.$rootURL.sink { [weak self] root in
             self?.statusItem?.button?.toolTip = root == nil ? "Hoover — Hover deeper. See everything." : "Hoover — Folder X-Ray active"
         }.store(in: &subscriptions)
+        state.$errorMessage.compactMap { $0 }.sink { [weak self] message in
+            Task { @MainActor [weak self] in
+                guard let self, !self.state.overlay.isVisible,
+                      self.state.errorMessage == message, NSApp.modalWindow == nil else { return }
+                // Saved locations can fail before a HUD exists to display the error.
+                let alert = NSAlert()
+                alert.messageText = "Hoover could not complete this action"
+                alert.informativeText = message
+                alert.addButton(withTitle: "OK")
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+            }
+        }.store(in: &subscriptions)
         if !state.tracker.permissionGranted { showPermissionWindow() }
         if ProcessInfo.processInfo.environment["HOOVER_LAUNCH_SMOKE_TEST"] == "1" {
             NSLog("Hoover native launch completed")
