@@ -40,6 +40,8 @@ final class AdvancedSearchTests: XCTestCase {
         XCTAssertEqual(path.clauses.count, 2)
         XCTAssertEqual(path.clauses[0].filter, .path("source files/core"))
         XCTAssertTrue(path.clauses[1].isExcluded)
+        XCTAssertEqual(try AdvancedSearch.parse(query: "D'Angelo 'annual report' path:'Source Files'").textTerms,
+                       ["D'Angelo", "annual report"])
     }
 
     func testAllFiltersAndExclusionsCombineWithANDWithoutChangingSymlinkIdentityOrDepth() throws {
@@ -101,6 +103,7 @@ final class AdvancedSearchTests: XCTestCase {
         XCTAssertEqual(try AdvancedSearch.search(query: "modified:today", records: records, now: now).matches.count, 1)
         XCTAssertEqual(try AdvancedSearch.search(query: "modified:7d", records: records, now: now).matches.count, 4)
         XCTAssertNoThrow(try AdvancedSearch.parse(query: "modified:2024-02-29"))
+        XCTAssertTrue(try AdvancedSearch.search(query: "modified:today", records: [record("invalid.txt", modified: Date(timeIntervalSinceReferenceDate: .nan))], now: now).matches.isEmpty)
     }
 
     func testInvalidSyntaxProvidesExplanatoryErrorsInsteadOfIgnoringFilters() {
@@ -122,5 +125,21 @@ final class AdvancedSearchTests: XCTestCase {
         XCTAssertEqual(try AdvancedSearch.search(query: "", records: records).visibleIDs, Set(records.map(\.node.id)))
         XCTAssertTrue(try AdvancedSearch.search(query: "advanced-root", records: records).matches.isEmpty)
         XCTAssertTrue(try AdvancedSearch.search(query: "kind:file path:../outside", records: records).matches.isEmpty)
+    }
+
+    func testCancelledSearchThrowsRatherThanPublishingPartialResults() async {
+        let task = Task<Bool, Never> {
+            withUnsafeCurrentTask { $0?.cancel() }
+            do {
+                _ = try AdvancedSearch.search(query: "kind:file", records: [])
+                return false
+            } catch is CancellationError {
+                return true
+            } catch {
+                return false
+            }
+        }
+        let cancelled = await task.value
+        XCTAssertTrue(cancelled)
     }
 }

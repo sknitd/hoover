@@ -10,6 +10,7 @@ private enum AdvancedFileActionError: LocalizedError {
     case destinationExists
     case notLocal
     case notDirectory
+    case symbolicLinkParent
     case outsideRoot
     case invalidTags
     case unavailableCloudFile
@@ -23,6 +24,7 @@ private enum AdvancedFileActionError: LocalizedError {
         case .destinationExists: return "An item with that name already exists. Nothing was replaced."
         case .notLocal: return "This action requires a local file or folder."
         case .notDirectory: return "Choose an existing folder."
+        case .symbolicLinkParent: return "Open the symbolic link as a root before creating a folder inside it."
         case .outsideRoot: return "This item is outside the current root folder."
         case .invalidTags: return "Enter one tag per line, without control characters."
         case .unavailableCloudFile: return "Download this cloud file in Finder before computing its checksum."
@@ -75,9 +77,16 @@ enum AdvancedFileOperations {
         throw AdvancedFileActionError.destinationExists
     }
 
-    static func createFolder(in parent: URL, name: String = "New Folder") throws -> URL {
+    static func createFolder(in parent: URL, name: String = "New Folder", root: URL? = nil) throws -> URL {
         try requireFileURL(parent)
-        guard (try parent.resourceValues(forKeys: [.isDirectoryKey])).isDirectory == true else {
+        if let root {
+            _ = try relativePath(of: parent, root: root)
+        } else {
+            let attributes = try FileManager.default.attributesOfItem(atPath: parent.path)
+            if attributes[.type] as? FileAttributeType == .typeSymbolicLink { throw AdvancedFileActionError.symbolicLinkParent }
+        }
+        var directory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: parent.path, isDirectory: &directory), directory.boolValue else {
             throw AdvancedFileActionError.notDirectory
         }
         let name = try validatedName(name)
@@ -117,6 +126,14 @@ enum AdvancedFileOperations {
         return result
     }
 
+    @discardableResult
+    static func setTags(_ tags: [String], for url: URL) throws -> [String] {
+        try requireFileURL(url)
+        let tags = try normalizedTags(tags)
+        try (url as NSURL).setResourceValue(tags, forKey: .tagNamesKey)
+        return tags
+    }
+
     /// The nonisolated async function runs away from the MainActor. Reads remain
     /// bounded per chunk; cancellation is checked before opening and each read.
     static func sha256(of url: URL, chunkSize: Int = 1_048_576) async throws -> String {
@@ -128,11 +145,10 @@ enum AdvancedFileOperations {
         guard initial.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else {
             throw AdvancedFileActionError.checksumRequiresRegularFile
         }
-        let cloud = try url.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemIsDownloadedKey,
-                                                    .ubiquitousItemDownloadingStatusKey])
+        let cloud = try url.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey])
         if initial.st_flags & UInt32(SF_DATALESS) != 0 ||
-            (cloud.isUbiquitousItem == true && cloud.ubiquitousItemIsDownloaded != true &&
-             cloud.ubiquitousItemDownloadingStatus != .current && cloud.ubiquitousItemDownloadingStatus != .downloaded) {
+            (cloud.isUbiquitousItem == true && cloud.ubiquitousItemDownloadingStatus != .current &&
+             cloud.ubiquitousItemDownloadingStatus != .downloaded) {
             throw AdvancedFileActionError.unavailableCloudFile
         }
         let descriptor = Darwin.open(url.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)
@@ -184,7 +200,8 @@ enum AdvancedFileOperations {
     private static func temporaryDirectory(in parent: URL) throws -> URL {
         var template = parent.appendingPathComponent(".hoover-copy-XXXXXX").path.utf8CString
         guard mkdtemp(&template) != nil else { throw posixError() }
-        return URL(fileURLWithPath: String(cString: template), isDirectory: true)
+        let path = template.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+        return URL(fileURLWithPath: path, isDirectory: true)
     }
 
     private static func nameParts(_ name: String, preserveAsFolder: Bool) -> (stem: String, extensionSuffix: String, firstNumber: Int) {
@@ -235,9 +252,9 @@ extension FileActions {
         runAdvancedMutation(changed: node.url) { try AdvancedFileOperations.duplicate(node.url) }
     }
 
-    func newFolder(in parent: URL) {
+    func newFolder(in parent: URL, root: URL? = nil) {
         guard let name = advancedPrompt(title: "New Folder", message: "Create a folder here.", value: "New Folder") else { return }
-        runAdvancedMutation(changed: parent) { try AdvancedFileOperations.createFolder(in: parent, name: name) }
+        runAdvancedMutation(changed: parent) { try AdvancedFileOperations.createFolder(in: parent, name: name, root: root) }
     }
 
     func copyRelativePath(_ node: FileNode, root: URL) {
@@ -321,11 +338,8 @@ extension FileActions {
                                             value: existing.joined(separator: "\n"), multiline: true) else { return }
             let tags = try AdvancedFileOperations.normalizedTags(text.components(separatedBy: .newlines))
             runAdvancedMutation(changed: node.url) {
-                var url = node.url
-                var values = URLResourceValues()
-                values.tagNames = tags
-                try url.setResourceValues(values)
-                return url
+                try AdvancedFileOperations.setTags(tags, for: node.url)
+                return node.url
             }
         } catch { onError?("Could not edit Finder tags. \(error.localizedDescription)") }
     }

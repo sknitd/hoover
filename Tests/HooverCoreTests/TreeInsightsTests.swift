@@ -22,6 +22,11 @@ final class TreeInsightsTests: XCTestCase {
         let upper = node("a/Report.txt"), lower = node("b/report.txt")
         XCTAssertEqual(TreeOrdering.sorted([upper, lower], foldersFirst: false).map(\.id), [upper.id, lower.id])
         XCTAssertEqual(TreeOrdering.sorted([lower, upper], ascending: false, foldersFirst: false).map(\.id), [lower.id, upper.id])
+        let padded = node("item02.txt")
+        XCTAssertEqual(TreeOrdering.sorted([padded, two]).map(\.id), [padded.id, two.id])
+        let huge = node("item999999999999999999999999999.txt")
+        XCTAssertEqual(TreeOrdering.sorted([huge, ten]).map(\.id), [ten.id, huge.id])
+        XCTAssertEqual(TreeOrdering.sorted([record(ten), record(two), record(one)]).map(\.node.id), [one.id, two.id, ten.id])
     }
 
     func testSizeModifiedAndKindSortingKeepUnknownValuesLastInEitherDirection() {
@@ -34,6 +39,8 @@ final class TreeInsightsTests: XCTestCase {
         XCTAssertEqual(TreeOrdering.sorted([old, unknown, new], by: .modified, ascending: false).map(\.id), [new.id, old.id, unknown.id])
         XCTAssertEqual(TreeOrdering.sorted([unknown, new, old], by: .kind).map(\.id), [old.id, unknown.id, new.id])
         XCTAssertEqual(TreeOrdering.sorted([invalid, old], by: .size).last?.id, invalid.id)
+        let badDate = node("bad-date.txt", modified: Date(timeIntervalSinceReferenceDate: .nan))
+        XCTAssertEqual(TreeOrdering.sorted([badDate, old], by: .modified, ascending: false).last?.id, badDate.id)
     }
 
     func testSummaryUsesOnlyIndexedDescendantsAndLatestMetadataForRepeatedIDs() {
@@ -105,5 +112,6 @@ final class TreeInsightsTests: XCTestCase {
         XCTAssertEqual(summary.extensionCounts[""], 1)
         XCTAssertEqual(FileKind.classify(plain), .file)
         XCTAssertEqual(FileKind.classify(link), .folder)
+        XCTAssertEqual(FileKind.classify(node("TypeScript.ts")), .code)
     }
 }

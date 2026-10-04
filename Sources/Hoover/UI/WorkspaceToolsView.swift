@@ -98,7 +98,7 @@ struct WorkspaceToolsView: View {
             }
             toolAction("New Folder…", symbol: "folder.badge.plus") {
                 toolsPresented = false
-                if let parent = newFolderParent { state.actions.newFolder(in: parent) }
+                if let parent = newFolderParent { state.createFolder(in: parent) }
             }
             .disabled(newFolderParent == nil)
             toolAction("Export Tree Manifest…", symbol: "square.and.arrow.up") {
@@ -125,7 +125,7 @@ struct WorkspaceToolsView: View {
             Divider()
             insightAction("Largest Files", detail: "Review the largest indexed files.", symbol: "arrow.up.right", mode: .largest)
             insightAction("Recently Modified", detail: "See the newest changes within this root.", symbol: "clock", mode: .recent)
-            insightAction("Same-Name Files", detail: "Find repeated names across folders.", symbol: "doc.on.doc", mode: .duplicateNames)
+            insightAction("Same-Name Items", detail: "Find repeated names across folders.", symbol: "doc.on.doc", mode: .duplicateNames)
             if state.insightMode != .none {
                 Divider()
                 toolAction("Return to Tree", symbol: "point.3.connected.trianglepath.dotted") {
@@ -143,7 +143,11 @@ struct WorkspaceToolsView: View {
     }
 
     private var newFolderParent: URL? {
-        if let node = state.focusedNode, node.isDirectory { return node.url }
+        if let node = state.focusedNode, node.isDirectory {
+            if node.isSymbolicLink, !settings.followSymlinks,
+               node.url.standardizedFileURL != state.rootURL?.standardizedFileURL { return nil }
+            return node.url
+        }
         return state.rootURL
     }
 

@@ -366,13 +366,14 @@ final class AppState: ObservableObject {
             guard !Task.isCancelled else { return }
             let sort = self?.sortOrder ?? .name
             let ascending = self?.sortAscending ?? true
-            let outcome: Result<(SearchResult, [TreeColumn]), Error> = await Task.detached(priority: .userInitiated) {
+            let worker = Task.detached(priority: .userInitiated) { () -> Result<(SearchResult, [TreeColumn]), Error> in
                 Result {
                     let result = try AdvancedSearch.search(query: value, records: records, fuzzy: fuzzy)
                     return (result, searchColumns(records: records, result: result, root: root,
                                                   sort: sort, ascending: ascending))
                 }
-            }.value
+            }
+            let outcome = await withTaskCancellationHandler(operation: { await worker.value }, onCancel: { worker.cancel() })
             guard !Task.isCancelled, let self, self.sessionRevision == revision,
                   self.filterRevision == queryRevision, self.isSearchActive else { return }
             switch outcome {
@@ -595,6 +596,6 @@ private func searchColumns(records: [IndexRecord], result: SearchResult, root: U
         let group = grouped[depth]!
         let parents = Set(group.compactMap(\.parentID))
         let parent = parents.count == 1 ? URL(fileURLWithPath: parents.first!) : root
-        return TreeColumn(parentURL: parent, level: depth, items: TreeOrdering.sorted(group.map(\.node), by: sort, ascending: ascending))
+        return TreeColumn(parentURL: parent, level: depth, items: TreeOrdering.sorted(group, by: sort, ascending: ascending).map(\.node))
     }
 }

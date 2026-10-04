@@ -166,7 +166,7 @@ private struct TreeColumnView: View {
         switch state.insightMode {
         case .largest: return ("No files with a known size", "Files appear here when size metadata is available.")
         case .recent: return ("No modification dates available", "Files appear here when modification metadata is available.")
-        case .duplicateNames: return ("No same-name files", "No repeated filenames in the indexed portion of this root.")
+        case .duplicateNames: return ("No same-name items", "No repeated names in the indexed portion of this root.")
         case .none:
             return state.isSearchActive && !state.query.isEmpty
                 ? ("No matches", "Try another name or extension.")
@@ -260,6 +260,10 @@ private struct XRayNodeCard: View {
     private var isFocused: Bool { state.focusedNode?.id == node.id }
     private var preview: FileMetadata? { isFocused && settings.showPreviews && !node.isDirectory ? state.preview : nil }
     private var textSize: CGFloat { settings.textSize == "Large" ? 14 : settings.textSize == "Compact" ? 11 : 12 }
+    private var canCreateChild: Bool {
+        node.isDirectory && (!node.isSymbolicLink || settings.followSymlinks
+            || node.url.standardizedFileURL == state.rootURL?.standardizedFileURL)
+    }
 
     private var insightLocation: String? {
         guard state.insightMode != .none, let root = state.rootURL else { return nil }
@@ -339,7 +343,11 @@ private struct XRayNodeCard: View {
         .onTapGesture(count: 2) { state.open(node) }
         .onTapGesture { state.select(node, level: level) }
         .onDrag { NSItemProvider(contentsOf: node.url) ?? NSItemProvider(object: node.url as NSURL) }
-        .contextMenu { NodeContextMenu(node: node, actions: state.actions, rootURL: state.rootURL, open: { state.open(node) }) }
+        .contextMenu {
+            NodeContextMenu(node: node, actions: state.actions, rootURL: state.rootURL,
+                            newFolder: canCreateChild ? { state.createFolder(in: node.url) } : nil,
+                            open: { state.open(node) })
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(node.name), \(detail)")
         .accessibilityHint(node.isDirectory ? "Hover to explore. Double-click to open a new Finder window." : "Double-click to open in the default application.")
@@ -351,6 +359,7 @@ struct NodeContextMenu: View {
     let node: FileNode
     let actions: FileActions
     var rootURL: URL? = nil
+    var newFolder: (() -> Void)? = nil
     let open: () -> Void
 
     var body: some View {
@@ -363,8 +372,8 @@ struct NodeContextMenu: View {
         Divider()
         Button("Rename…") { actions.rename(node) }
         Button("Duplicate") { actions.duplicate(node) }
-        if node.isDirectory {
-            Button("New Folder Here…") { actions.newFolder(in: node.url) }
+        if node.isDirectory, rootURL != nil {
+            Button("New Folder Here…") { newFolder?() }.disabled(newFolder == nil)
         }
         Button("Edit Finder Tags…") { actions.editTags(node) }
         Divider()

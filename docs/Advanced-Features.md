@@ -15,7 +15,7 @@ Search and insights use the active folder's indexed descendants. Filtering, sort
 | 7 | Folder statistics | Show indexed file/folder counts and known logical file bytes, identifying partial indexing and unavailable metadata. |
 | 8 | Largest files | Rank actual indexed files by logical size, with deterministic ties and a bounded list. Selecting a result refers to that real file. |
 | 9 | Recent files | Rank actual indexed files by modification time, excluding invented dates and keeping the list bounded. |
-| 10 | Duplicate-name groups | Group matching filenames in different indexed branches, clearly distinguishing name duplication from equal file contents. |
+| 10 | Duplicate-name groups | Group matching item names in different indexed branches, including folders, clearly distinguishing name duplication from equal file contents. |
 | 11 | Favorites | Add/remove real folder locations, persist them locally, and handle a moved or missing favorite without opening a guessed location. |
 | 12 | Recent locations | Record real visited locations, deduplicate and bound the history, and preserve it across a restart. |
 | 13 | Saved searches | Persist reusable named queries and apply them to the current active root. Applying a saved filter must not silently open another folder or change the session root. |
@@ -28,7 +28,7 @@ Search and insights use the active folder's indexed descendants. Filtering, sort
 | 20 | CSV manifest | Export a real index snapshot with escaped CSV cells and a clear indication of a partial index. Export must not enumerate unrelated files or overwrite a destination without the native save flow. |
 | 21 | Rename | Rename the explicitly chosen real item, reject unsafe names/collisions, refresh affected cards/indexes, and report failure without claiming success. |
 | 22 | Duplicate | Duplicate the explicitly chosen real item to a collision-free sibling destination, preserve the original, and refresh the session. |
-| 23 | New folder | Create a real folder in the chosen valid parent, reject unsafe names/collisions, and update browsing/indexing after success. |
+| 23 | New folder | Create a real folder in the chosen valid parent, reject unsafe names, choose a numbered sibling when a name already exists, and update browsing/indexing after success. |
 | 24 | Copy relative path | Copy a path relative to the current root only for its descendants; never fabricate a relative path for an unrelated item. |
 | 25 | Copy file URL | Copy the actual file URL with correct encoding for spaces, quotes, and Unicode. |
 | 26 | Share | Present the native sharing interface for the chosen real file; cancellation preserves the file and session. |
@@ -43,4 +43,12 @@ With default settings, hover a Finder folder for three seconds, an inner folder 
 
 Double-clicking a file in a HUD or tree opens its registered default application. Double-clicking a folder opens a **new Finder window** at that folder. Successful opening dismisses the HUD and preserves the chosen application's focus, including when a session was pinned. Automation denial must report a useful error.
 
-All acceptance tests use temporary real filesystem fixtures. They do not add a product demo mode, simulate Finder, or substitute source inspection for interactive macOS verification.
+Filesystem and session tests use temporary real fixtures; pure core tests can construct index-record values without accessing the filesystem. Tests do not add a product demo mode, simulate Finder, or substitute source inspection for interactive macOS verification.
+
+## Query grammar and tool entry points
+
+Open filtering with **⌘F**. Terms combine with AND; quote a phrase and prefix a term or filter with `-` to exclude it. Examples include `"annual report" -draft ext:pdf`, `kind:image size:>10MB`, and `ext:swift,json path:Sources`. Kind classification is based on the file extension rather than inspection of its contents. Sizes accept explicit decimal/binary units and comparisons or inclusive ranges, such as `size:1MiB..10MiB`.
+
+Dates use UTC calendar days. `modified:2026-10-01` includes that full day; `before:2026-10-01` excludes it; `after:2026-10-01` starts on the following day. `modified:7d` is a rolling seven-day interval. Missing size/date metadata does not satisfy a positive condition. Unsupported filter names and malformed values report errors instead of silently dropping the condition.
+
+The native **Workspace**, **Insights**, and **Tree tools** surfaces expose saved locations/filters, root summaries, ranking, sort order, visibility, pinning, reindexing, and export. Arrow keys navigate the tree while a text editor keeps ordinary cursor movement. **⌘G / ⇧⌘G** move through search matches, **⇧⌘P** toggles pinning, and **⌘R** refreshes when a text editor is not active. File actions are available from the native card context menu and the File HUD action menu.

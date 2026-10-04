@@ -10,7 +10,7 @@ enum InsightMode: String, CaseIterable {
         case .none: return "Folder tree"
         case .largest: return "Largest files"
         case .recent: return "Recently modified"
-        case .duplicateNames: return "Same-name files"
+        case .duplicateNames: return "Same-name items"
         }
     }
 }
@@ -29,7 +29,20 @@ extension AppState {
     func clearRecentRoots() { workspace.clearHistory() }
     func removeSavedSearch(_ id: UUID) { workspace.removeSavedSearch(id: id) }
 
+    func createFolder(in parent: URL) {
+        guard let root = rootURL, isWithinRoot(parent, root: root),
+              isWithinRoot(parent.resolvingSymlinksInPath(), root: root.resolvingSymlinksInPath()),
+              let node = try? DirectoryReader.node(at: parent), node.isDirectory,
+              !settings.isExcluded(parent),
+              parent.standardizedFileURL == root.standardizedFileURL || !node.isSymbolicLink || settings.followSymlinks else {
+            errorMessage = "Choose an accessible folder inside this root. Following folder links must be enabled for descendant links."
+            return
+        }
+        actions.newFolder(in: parent, root: root)
+    }
+
     func openWorkspace(_ url: URL) {
+        guard !actions.isOpening else { errorMessage = "Wait for the current file action to finish before switching folders."; return }
         guard url.isFileURL, !settings.isExcluded(url),
               let node = try? DirectoryReader.node(at: url), node.isDirectory else {
             errorMessage = "This saved folder is unavailable or excluded."
@@ -52,8 +65,8 @@ extension AppState {
         updateQuery(saved.query)
     }
 
-    func setSortOrder(_ value: NodeSortOrder) { sortOrder = value; resortColumns() }
-    func setAscending(_ value: Bool) { sortAscending = value; resortColumns() }
+    func setSortOrder(_ value: NodeSortOrder) { sortOrder = value; resortColumns(); if isSearchActive { updateQuery(query) } }
+    func setAscending(_ value: Bool) { sortAscending = value; resortColumns(); if isSearchActive { updateQuery(query) } }
 
     private func resortColumns() {
         func sorted(_ input: [TreeColumn]) -> [TreeColumn] {
@@ -197,6 +210,7 @@ extension AppState {
         panel.message = isIndexing ? "Indexing is in progress. This exports the currently indexed items." : "Export this root’s indexed file inventory."
         let records = indexRecords
         let indexFinished = !isIndexing
+        let exportRevision = sessionRevision
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
             Task { @MainActor in
@@ -204,7 +218,10 @@ extension AppState {
                     try await Task.detached(priority: .utility) {
                         try Self.inventoryCSV(records, indexFinished: indexFinished).write(to: url, atomically: true, encoding: .utf8)
                     }.value
-                } catch { self?.errorMessage = "Could not export inventory: \(error.localizedDescription)" }
+                } catch {
+                    guard let self, self.sessionRevision == exportRevision else { return }
+                    self.errorMessage = "Could not export inventory: \(error.localizedDescription)"
+                }
             }
         }
     }

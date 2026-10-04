@@ -20,6 +20,7 @@ public struct ModifiedConstraint: Sendable, Equatable {
     public let includesUpperBound: Bool
 
     fileprivate func contains(_ date: Date) -> Bool {
+        guard date.timeIntervalSinceReferenceDate.isFinite else { return false }
         if let lowerBound, includesLowerBound ? date < lowerBound : date <= lowerBound { return false }
         if let upperBound, includesUpperBound ? date > upperBound : date >= upperBound { return false }
         return true
@@ -76,7 +77,7 @@ public enum AdvancedSearchError: LocalizedError, Sendable, Equatable {
 }
 
 public enum AdvancedSearch {
-    public static let queryHelp = "Words and quoted phrases combine with AND. Exclude with -word. Filters: kind:file|folder|image|video|audio|document|code|archive; ext:swift,pdf; size:>10MB or 1MiB..10MiB; modified:>=2026-01-01, today, yesterday, or 7d; before:2026-01-01; after:2026-01-01; path:\"Sources/Core\". Dates use UTC calendar days; after excludes the named day. Filters stay inside the current root."
+    public static let queryHelp = "Words and quoted phrases combine with AND. Exclude with -word. Filters: kind:image,video (file, folder, audio, document, code, archive also work); ext:swift,pdf; size:>10MB or 1MiB..10MiB; modified:>=2026-01-01, today, yesterday, or 7d; before:2026-01-01; after:2026-01-01; path:\"Sources/Core\". Dates use UTC calendar days; after excludes the named day. Filters stay inside the current root."
     public static let examples = ["\"annual report\" -draft ext:pdf", "kind:image size:>10MB", "ext:swift,json path:Sources", "modified:7d -kind:folder", "size:1MiB..10MiB before:2026-01-01"]
 
     public static func parse(query: String, now: Date = Date()) throws -> ParsedSearchQuery {
@@ -128,6 +129,7 @@ public enum AdvancedSearch {
     public static func search(query: String, records: [IndexRecord], fuzzy: Bool = false,
                               now: Date = Date()) throws -> SearchResult {
         let parsed = try parse(query: query, now: now)
+        try Task.checkCancellation()
         if parsed.isEmpty { return TreeSearch.search(query: "", records: records, fuzzy: fuzzy) }
         if parsed.textTerms.count == 1, parsed.excludedTerms.isEmpty, parsed.clauses.isEmpty {
             return TreeSearch.search(query: parsed.textTerms[0], records: records, fuzzy: fuzzy)
@@ -136,6 +138,7 @@ public enum AdvancedSearch {
         if let term = parsed.textTerms.first {
             candidates = TreeSearch.search(query: term, records: records, fuzzy: fuzzy).matches
             for term in parsed.textTerms.dropFirst() {
+                try Task.checkCancellation()
                 let additional = TreeSearch.search(query: term, records: candidates.map(\.record), fuzzy: fuzzy)
                 let ranks = Dictionary(additional.matches.map { ($0.record.node.id, $0.rank) }, uniquingKeysWith: min)
                 candidates = candidates.compactMap { match in
@@ -146,23 +149,33 @@ public enum AdvancedSearch {
             candidates = records.filter { $0.depth > 0 }.map { SearchMatch(record: $0, rank: 0) }
         }
         for term in parsed.excludedTerms {
+            try Task.checkCancellation()
             let ids = Set(TreeSearch.search(query: term, records: candidates.map(\.record)).matches.map { $0.record.node.id })
             candidates.removeAll { ids.contains($0.record.node.id) }
         }
-        candidates.removeAll { match in
-            parsed.clauses.contains { clause in
+        var examined = 0
+        try candidates.removeAll { match in
+            examined += 1
+            if examined.isMultiple(of: 512) { try Task.checkCancellation() }
+            return parsed.clauses.contains { clause in
                 let passed = matches(clause.filter, record: match.record)
                 return clause.isExcluded ? passed : !passed
             }
         }
-        candidates.sort {
+        var comparisons = 0
+        try candidates.sort {
+            comparisons += 1
+            if comparisons.isMultiple(of: 2_048) { try Task.checkCancellation() }
             if $0.rank != $1.rank { return $0.rank < $1.rank }
             if $0.record.depth != $1.record.depth { return $0.record.depth < $1.record.depth }
             if $0.record.normalizedName != $1.record.normalizedName { return $0.record.normalizedName < $1.record.normalizedName }
             return $0.record.node.id < $1.record.node.id
         }
         var parents: [String: IndexRecord] = [:]
-        for record in records where record.node.isDirectory { parents[record.node.id] = record }
+        for (offset, record) in records.enumerated() {
+            if offset.isMultiple(of: 512) { try Task.checkCancellation() }
+            if record.node.isDirectory { parents[record.node.id] = record }
+        }
         var visible: Set<String> = []
         for match in candidates {
             var record: IndexRecord? = match.record
@@ -170,13 +183,16 @@ public enum AdvancedSearch {
                 record = item.parentID.flatMap { parents[$0] }
             }
         }
+        try Task.checkCancellation()
         return SearchResult(matches: candidates, visibleIDs: visible)
     }
 
     private static func matches(_ filter: AdvancedSearchFilter, record: IndexRecord) -> Bool {
         switch filter {
         case .kind(let kinds):
-            return kinds.contains(FileKind.classify(record.node)) || (kinds.contains(.file) && !record.node.isDirectory)
+            return kinds.contains(FileKind.classify(normalizedExtension: record.normalizedExtension,
+                                                    isDirectory: record.node.isDirectory)) ||
+                (kinds.contains(.file) && !record.node.isDirectory)
         case .extensions(let extensions):
             return !record.node.isDirectory && extensions.contains {
                 record.normalizedName.hasSuffix("." + $0)
@@ -208,6 +224,9 @@ public enum AdvancedSearch {
             if let active = quote {
                 if character == active { quote = nil } else { text.append(character) }
                 continue
+            }
+            if character == "'", !text.isEmpty, text.last != ":" {
+                text.append(character); started = true; continue
             }
             if character == "\"" || character == "'" {
                 if text.isEmpty { literal = true }
