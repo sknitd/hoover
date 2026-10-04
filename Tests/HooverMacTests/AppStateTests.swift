@@ -235,7 +235,7 @@ final class AppStateTests: XCTestCase {
         _ = NSApplication.shared
         let suite = "HooverAppStateTests-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        return (AppState(settings: HooverSettings(defaults: defaults), monotonicTime: monotonicTime), defaults, suite)
+        return (AppState(settings: HooverSettings(defaults: defaults), workspace: WorkspaceStore(defaults: defaults), monotonicTime: monotonicTime), defaults, suite)
     }
 
     private func makeFolderFixture() throws -> URL {

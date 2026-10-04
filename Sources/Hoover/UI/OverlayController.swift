@@ -186,6 +186,15 @@ final class OverlayController {
         case .escape: state.escape()
         case .quickLook: if let node = state.focusedNode { state.actions.quickLook(node) }
         case .open: if let node = state.focusedNode { state.open(node) }
+        case .up: state.navigate(.up)
+        case .down: state.navigate(.down)
+        case .left: state.navigate(.left)
+        case .right: state.navigate(.right)
+        case .nextMatch: state.cycleSearchMatch()
+        case .previousMatch: state.cycleSearchMatch(backwards: true)
+        case .pin: state.togglePin()
+        case .refresh: state.refresh()
+
         }
     }
 }
@@ -195,15 +204,30 @@ private final class HooverPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-private enum OverlayCommand {
-    case search, escape, quickLook, open
+enum OverlayCommand: Equatable {
+    case search, escape, quickLook, open, up, down, left, right, nextMatch, previousMatch, pin, refresh
 
     static func match(keyCode: UInt16, flags: NSEvent.ModifierFlags, folder: Bool, editing: Bool) -> OverlayCommand? {
         let modifiers = flags.intersection([.command, .control, .option, .shift])
         if keyCode == 3 && modifiers == .command && folder { return .search }
+        if keyCode == 5 && folder {
+            if modifiers == .command { return .nextMatch }
+            if modifiers == [.command, .shift] { return .previousMatch }
+        }
+        if keyCode == 35 && modifiers == [.command, .shift] { return .pin }
+        if keyCode == 15 && modifiers == .command && folder && !editing { return .refresh }
         guard modifiers.isEmpty else { return nil }
         if keyCode == 53 { return .escape }
         guard !editing else { return nil }
+        if folder {
+            switch keyCode {
+            case 126: return .up
+            case 125: return .down
+            case 123: return .left
+            case 124: return .right
+            default: break
+            }
+        }
         if keyCode == 49 { return .quickLook }
         if keyCode == 36 || keyCode == 76 { return .open }
         return nil

@@ -35,7 +35,7 @@ final class RenderSnapshotsTests: XCTestCase {
             let settings = HooverSettings(defaults: defaults)
             settings.theme = theme
             settings.showNotes = false
-            let state = AppState(settings: settings)
+            let state = AppState(settings: settings, workspace: WorkspaceStore(defaults: defaults))
             state.rootURL = root
             state.columns = [
                 TreeColumn(parentURL: root, level: 1, items: try DirectoryReader.contents(of: root)),
@@ -63,6 +63,14 @@ final class RenderSnapshotsTests: XCTestCase {
             try await render(XRayView(state: model, rootAnchor: CGPoint(x: 24, y: 270)), name: name,
                              size: NSSize(width: 1360, height: 880), dark: theme == "Dark")
         }
+        let insightState = try state(theme: "Dark")
+        insightState.insights = TreeInsights.analyze(records)
+        insightState.showInsight(.largest)
+        insightState.isPinned = true
+        try await render(XRayView(state: insightState, rootAnchor: CGPoint(x: 24, y: 270)), name: "advanced-largest-pinned",
+                         size: NSSize(width: 1360, height: 880), dark: true)
+        try await render(HoverDiagnosticsView(state: insightState, tracker: insightState.tracker), name: "hover-diagnostics",
+                         size: NSSize(width: 510, height: 400), dark: false)
         let fileState = try state(theme: "Dark")
         fileState.rootURL = nil
         fileState.focusedNode = try DirectoryReader.node(at: code)

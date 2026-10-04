@@ -9,6 +9,20 @@ A native Swift/AppKit menu bar utility that adds two distinct inspection layers 
 
 Hoover has no user-facing demo mode, browser wrapper, analytics, or remote file inspection.
 
+## Hoover 1.1: advanced tools
+
+Thirty additions bring structured search, root insights, saved workspaces, keyboard navigation, and native file tools to the HUD. The full numbered inventory is in [Advanced Features](docs/Advanced-Features.md).
+
+- Combine quoted phrases and exclusions with `kind:image`, `ext:swift,pdf`, `size:>10MB`, `modified:7d`, and `path:Sources`. Filters keep the complete ancestry inside the current root; invalid expressions explain how to fix them.
+- Use **Workspace** for favorite/recent roots and reusable saved filters. Use **Insights** for counts, known sizes, file types, largest files, recent changes, and repeated filenames. Repeated names do not assert identical contents.
+- Use **Tree Tools** for sorting, pinning, hidden files, refresh/reindex, folder creation, and a CSV inventory. Inventories record whether indexing had finished when the snapshot was taken.
+- Right-click a card for collision-safe rename/duplicate, relative paths, file URLs, native sharing, Terminal, cancellable SHA-256, and Finder tags.
+- Choose **Hover Diagnostics…** from the menu bar to see live Accessibility and item-resolution outcomes without blocking Finder hover. **Open Folder X-Ray…** also opens an explicitly chosen local folder directly.
+
+Arrow keys navigate the tree when a text field is not being edited. **⌘G / ⇧⌘G** cycle search matches; **⇧⌘P** pins the current HUD; **⌘R** refreshes. Breadcrumbs stay within the original root. Pins prevent automatic replacement/dismissal; Escape and successful file opening still close the session.
+
+Favorites, recent paths, and saved filters are stored only in local preferences. Recent history and saved filters can be cleared from their menus. Notes, Finder tags, rename, duplicate, and folder creation occur only after their explicit actions.
+
 ## Build the application
 
 Requires macOS 13 or later and Xcode Command Line Tools with Swift 5.9 or later.

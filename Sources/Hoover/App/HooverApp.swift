@@ -24,12 +24,15 @@ final class HooverAppDelegate: NSResponder, NSApplicationDelegate, NSMenuDelegat
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
     private var permissionWindow: NSWindow?
+    private var diagnosticsPanel: NSPanel?
     private var subscriptions = Set<AnyCancellable>()
     private var activeItem: NSMenuItem?
     private var pauseItem: NSMenuItem?
     private var folderItem: NSMenuItem?
     private var fileItem: NSMenuItem?
     private var permissionItem: NSMenuItem?
+    private var favoritesMenu: NSMenu?
+    private var recentMenu: NSMenu?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -48,6 +51,19 @@ final class HooverAppDelegate: NSResponder, NSApplicationDelegate, NSMenuDelegat
         }.store(in: &subscriptions)
         state.$rootURL.sink { [weak self] root in
             self?.statusItem?.button?.toolTip = root == nil ? "Hoover — Hover deeper. See everything." : "Hoover — Folder X-Ray active"
+        }.store(in: &subscriptions)
+        state.$errorMessage.compactMap { $0 }.sink { [weak self] message in
+            Task { @MainActor [weak self] in
+                guard let self, !self.state.overlay.isVisible,
+                      self.state.errorMessage == message, NSApp.modalWindow == nil else { return }
+                // Saved locations can fail before a HUD exists to display the error.
+                let alert = NSAlert()
+                alert.messageText = "Hoover could not complete this action"
+                alert.informativeText = message
+                alert.addButton(withTitle: "OK")
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+            }
         }.store(in: &subscriptions)
         if !state.tracker.permissionGranted { showPermissionWindow() }
         if ProcessInfo.processInfo.environment["HOOVER_LAUNCH_SMOKE_TEST"] == "1" {
@@ -78,7 +94,16 @@ final class HooverAppDelegate: NSResponder, NSApplicationDelegate, NSMenuDelegat
         folderItem = addItem("Folder X-Ray", action: #selector(toggleFolder), menu: menu)
         fileItem = addItem("File Hover", action: #selector(toggleFile), menu: menu)
         menu.addItem(.separator())
+        _ = addItem("Open Folder X-Ray…", action: #selector(chooseFolder), menu: menu)
+        let favorites = addItem("Favorite Folders", action: nil, menu: menu)
+        favoritesMenu = NSMenu(title: "Favorite Folders")
+        favorites.submenu = favoritesMenu
+        let recent = addItem("Recent Folders", action: nil, menu: menu)
+        recentMenu = NSMenu(title: "Recent Folders")
+        recent.submenu = recentMenu
+        menu.addItem(.separator())
         permissionItem = addItem("Accessibility Permission…", action: #selector(showPermissionWindow), menu: menu)
+        _ = addItem("Hover Diagnostics…", action: #selector(showDiagnostics), menu: menu)
         _ = addItem("Settings…", action: #selector(showSettings), key: ",", menu: menu)
         _ = addItem("About Hoover", action: #selector(showAbout), menu: menu)
         menu.addItem(.separator())
@@ -96,7 +121,50 @@ final class HooverAppDelegate: NSResponder, NSApplicationDelegate, NSMenuDelegat
         return item
     }
 
-    func menuWillOpen(_ menu: NSMenu) { updateMenu() }
+    func menuWillOpen(_ menu: NSMenu) {
+        updateMenu()
+        populateLocations(favoritesMenu, roots: state.favoriteRoots, empty: "No favorite folders")
+        populateLocations(recentMenu, roots: state.recentRoots, empty: "No recent folders")
+        if !state.recentRoots.isEmpty, let menu = recentMenu {
+            menu.addItem(.separator())
+            _ = addItem("Clear Recent Folders", action: #selector(clearRecent), menu: menu)
+        }
+    }
+
+    private func populateLocations(_ menu: NSMenu?, roots: [URL], empty: String) {
+        guard let menu else { return }
+        menu.removeAllItems()
+        if roots.isEmpty {
+            let item = NSMenuItem(title: empty, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+        for root in roots {
+            let item = addItem(root.lastPathComponent, action: #selector(openLocation(_:)), menu: menu)
+            item.representedObject = root
+            item.toolTip = root.path
+        }
+    }
+
+    @objc private func openLocation(_ sender: NSMenuItem) {
+        if let url = sender.representedObject as? URL { state.openWorkspace(url) }
+    }
+
+    @objc private func clearRecent() { state.clearRecentRoots() }
+
+    @objc private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Explore"
+        panel.message = "Choose the root folder to explore in Hoover."
+        NSApp.activate(ignoringOtherApps: true)
+        panel.begin { [weak self] result in
+            guard result == .OK, let url = panel.url else { return }
+            Task { @MainActor in self?.state.openWorkspace(url) }
+        }
+    }
 
     private func updateMenu() {
         let trusted = state.tracker.permissionGranted
@@ -113,6 +181,23 @@ final class HooverAppDelegate: NSResponder, NSApplicationDelegate, NSMenuDelegat
     @objc private func toggleFolder() { settings.folderEnabled.toggle() }
     @objc private func toggleFile() { settings.fileEnabled.toggle() }
     @objc private func quit() { NSApp.terminate(nil) }
+
+    @objc private func showDiagnostics() {
+        if diagnosticsPanel == nil {
+            let panel = HoverDiagnosticsPanel(contentRect: NSRect(x: 0, y: 0, width: 510, height: 400),
+                                              styleMask: [.titled, .closable, .nonactivatingPanel],
+                                              backing: .buffered, defer: false)
+            panel.title = "Hoover Hover Diagnostics"
+            panel.isReleasedWhenClosed = false
+            panel.level = .floating
+            panel.hidesOnDeactivate = false
+            panel.contentView = NSHostingView(rootView: HoverDiagnosticsView(state: state, tracker: state.tracker))
+            panel.center()
+            diagnosticsPanel = panel
+        }
+        // Keeping this panel non-key allows real Finder hit testing to continue.
+        diagnosticsPanel?.orderFrontRegardless()
+    }
 
     @objc private func showSettings() {
         state.dismiss(restoreFinder: false)

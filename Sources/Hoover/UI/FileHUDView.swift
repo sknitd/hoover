@@ -61,7 +61,7 @@ struct FileHUDView: View {
         .contentShape(RoundedRectangle(cornerRadius: 19))
         .onTapGesture(count: 2) { state.open(node) }
         .onDrag { NSItemProvider(contentsOf: node.url) ?? NSItemProvider(object: node.url as NSURL) }
-        .contextMenu { NodeContextMenu(node: node, actions: state.actions, open: { state.open(node) }) }
+        .contextMenu { NodeContextMenu(node: node, actions: state.actions, rootURL: state.rootURL, open: { state.open(node) }) }
     }
 
     private func header(_ node: FileNode, metadata: FileMetadata?) -> some View {
@@ -89,6 +89,16 @@ struct FileHUDView: View {
         HStack(spacing: 10) {
             Text("Double-click to open").font(.system(size: 10)).foregroundStyle(.tertiary)
             Spacer(minLength: 0)
+            Button { state.togglePin() } label: {
+                Image(systemName: state.isPinned ? "pin.fill" : "pin").font(.system(size: 12))
+            }.buttonStyle(.plain).foregroundStyle(state.isPinned ? settings.accentColor : Color.secondary)
+                .help(state.isPinned ? "Unpin file HUD" : "Pin file HUD")
+                .accessibilityLabel(state.isPinned ? "Unpin file HUD" : "Pin file HUD")
+            Menu {
+                NodeContextMenu(node: node, actions: state.actions, rootURL: state.rootURL, open: { state.open(node) })
+            } label: {
+                Image(systemName: "ellipsis.circle").font(.system(size: 12))
+            }.menuStyle(.borderlessButton).fixedSize().foregroundStyle(.secondary).help("File actions")
             Button { state.actions.quickLook(node) } label: {
                 Image(systemName: "eye").font(.system(size: 12))
             }.buttonStyle(.plain).foregroundStyle(settings.accentColor).help("Quick Look (Space)")

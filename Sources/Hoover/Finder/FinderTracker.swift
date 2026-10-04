@@ -18,11 +18,45 @@ struct FinderObservation {
     var pointerOverFinder = false
 }
 
+/// Fixed messages describe observed states without retaining filenames, paths,
+/// Accessibility labels, or a history of what the user hovered.
+enum FinderDiagnostic: String {
+    case stopped = "Finder hover tracking is stopped."
+    case permissionRequired = "Accessibility permission is required."
+    case mouseButtonDown = "Hover is paused while a mouse button is held."
+    case finderUnavailable = "Finder is not available."
+    case activeApplicationUnavailable = "The foreground application could not be identified."
+    case hooverWindowActive = "Hover is paused while a Hoover window is active."
+    case applicationChanged = "The foreground application changed; waiting for a fresh hover."
+    case pointerMoved = "The pointer moved before Finder answered; waiting for a fresh hover."
+    case hitUnavailable = "Accessibility could not identify the item under the pointer."
+    case ownershipUnavailable = "Accessibility could not identify which app owns the item."
+    case pointerOutsideFinder = "The pointer is outside Finder."
+    case interactionBlocked = "A menu, editor, or modal interaction is pausing Finder hover."
+    case finderControls = "The pointer is over Finder controls rather than a file item."
+    case noItem = "No Finder file item was verified under the pointer."
+    case directoryContextUnavailable = "Finder did not expose a safe containing folder for this item."
+    case nameUnresolved = "Finder's item name could not be matched uniquely in its folder."
+    case itemUnreadable = "Finder identified an item, but its file information could not be read."
+    case directItemVerified = "Finder item verified from its file location."
+    case uniqueNameVerified = "Finder item verified from a unique name in its containing folder."
+
+    static func preflight(permissionGranted: Bool, mouseButtonDown: Bool,
+                          finderAvailable: Bool, activeApplicationAvailable: Bool) -> Self? {
+        if !permissionGranted { return .permissionRequired }
+        if mouseButtonDown { return .mouseButtonDown }
+        if !finderAvailable { return .finderUnavailable }
+        if !activeApplicationAvailable { return .activeApplicationUnavailable }
+        return nil
+    }
+}
+
 /// Produces observations; the coordinator owns dwell timers and overlay retention.
 /// Accessibility work is serial, bounded, and never performed on the UI thread.
 @MainActor
 final class FinderTracker: ObservableObject {
     @Published private(set) var permissionGranted = AXIsProcessTrusted()
+    @Published private(set) var diagnosticStatus = FinderDiagnostic.stopped.rawValue
     var onObservation: ((FinderObservation) -> Void)?
 
     private let queue = DispatchQueue(label: "com.hoover.finder-accessibility", qos: .userInitiated)
@@ -48,6 +82,7 @@ final class FinderTracker: ObservableObject {
         timer?.invalidate()
         timer = nil
         generation &+= 1
+        setDiagnostic(.stopped)
         // Let an outstanding probe finish; its generation will be discarded.
         onObservation?(FinderObservation(node: nil, bounds: nil, blocked: true,
                                          finderActive: false, pointer: NSEvent.mouseLocation))
@@ -70,6 +105,11 @@ final class FinderTracker: ObservableObject {
         lastPermissionCheck = Date()
     }
 
+    private func setDiagnostic(_ diagnostic: FinderDiagnostic) {
+        let message = diagnostic.rawValue
+        if diagnosticStatus != message { diagnosticStatus = message }
+    }
+
     private func poll() {
         guard timer != nil else { return }
         if Date().timeIntervalSince(lastPermissionCheck) >= 2 { refreshPermission() }
@@ -82,14 +122,19 @@ final class FinderTracker: ObservableObject {
         // can leave the accessory app frontmost with no key window; actual Finder
         // hit testing must resume there without requiring another click.
         let finderPID = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first?.processIdentifier
-        guard permissionGranted, NSEvent.pressedMouseButtons == 0,
-              let pid = finderPID, let activePID = active?.processIdentifier else {
+        let mouseButtonDown = NSEvent.pressedMouseButtons != 0
+        if let diagnostic = FinderDiagnostic.preflight(permissionGranted: permissionGranted,
+                                                        mouseButtonDown: mouseButtonDown,
+                                                        finderAvailable: finderPID != nil,
+                                                        activeApplicationAvailable: active != nil) {
             generation &+= 1
+            setDiagnostic(diagnostic)
             onObservation?(FinderObservation(node: nil, bounds: nil,
-                                             blocked: !permissionGranted || NSEvent.pressedMouseButtons != 0,
+                                             blocked: !permissionGranted || mouseButtonDown,
                                              finderActive: finderActive, pointer: pointer))
             return
         }
+        guard let pid = finderPID, let activePID = active?.processIdentifier else { return }
         guard !inFlight else { return }
         inFlight = true
         let token = generation
@@ -107,6 +152,7 @@ final class FinderTracker: ObservableObject {
                 let currentApp = NSWorkspace.shared.frontmostApplication
                 let stillActive = currentApp?.processIdentifier == activePID
                 guard stillActive, NSEvent.pressedMouseButtons == 0 else {
+                    self.setDiagnostic(NSEvent.pressedMouseButtons != 0 ? .mouseButtonDown : .applicationChanged)
                     self.onObservation?(FinderObservation(node: nil, bounds: nil,
                                                          blocked: NSEvent.pressedMouseButtons != 0,
                                                          finderActive: currentApp?.bundleIdentifier == "com.apple.finder",
@@ -117,6 +163,7 @@ final class FinderTracker: ObservableObject {
                    NSApp.keyWindow != nil || NSApp.modalWindow != nil {
                     // Opening settings/onboarding can retain the same foreground
                     // PID while changing whether hover behind Hoover is allowed.
+                    self.setDiagnostic(.hooverWindowActive)
                     self.onObservation?(FinderObservation(node: nil, bounds: nil, blocked: false,
                                                          finderActive: false, pointer: currentPointer,
                                                          liveWindowIDs: result.liveWindowIDs))
@@ -127,11 +174,13 @@ final class FinderTracker: ObservableObject {
                 // now be under the cursor. The following tick resolves that position.
                 let distance = hypot(currentPointer.x - pointer.x, currentPointer.y - pointer.y)
                 guard !snapshot.allowHitTesting || result.blocked || (distance <= 8 && result.bounds?.insetBy(dx: -1, dy: -1).contains(currentPointer) != false) else {
+                    self.setDiagnostic(.pointerMoved)
                     self.onObservation?(FinderObservation(node: nil, bounds: nil, blocked: false,
                                                          finderActive: finderActive, pointer: currentPointer,
                                                          liveWindowIDs: result.liveWindowIDs))
                     return
                 }
+                self.setDiagnostic(result.diagnostic)
                 self.onObservation?(FinderObservation(node: result.node, bounds: result.bounds,
                                                      blocked: result.blocked, finderActive: finderActive,
                                                      pointer: currentPointer,
@@ -186,6 +235,7 @@ private struct FinderProbeResult {
     var sourceWindowID: Int? = nil
     var liveWindowIDs: Set<Int>? = nil
     var pointerOverFinder = false
+    var diagnostic: FinderDiagnostic = .noItem
 }
 
 /// This object is accessed exclusively by FinderTracker's serial background queue.
@@ -212,9 +262,10 @@ private final class FinderAccessibilityProbe {
             cachedNode = nil
             directoryCache.removeAll()
         }
-        guard let finder else { return FinderProbeResult() }
+        guard let finder else { return FinderProbeResult(diagnostic: .finderUnavailable) }
         let liveWindows = liveWindowSnapshot(finder)
-        var result = snapshot.allowHitTesting ? observeItem(snapshot, app: finder) : FinderProbeResult()
+        var result = snapshot.allowHitTesting ? observeItem(snapshot, app: finder)
+            : FinderProbeResult(diagnostic: .hooverWindowActive)
         result.liveWindowIDs = liveWindows
         return result
     }
@@ -223,9 +274,12 @@ private final class FinderAccessibilityProbe {
         let point = snapshot.coordinates.quartzPoint(snapshot.pointer)
         var hit: AXUIElement?
         guard AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit) == .success,
-              let hit else { return FinderProbeResult() }
+              let hit else { return FinderProbeResult(diagnostic: .hitUnavailable) }
         var pid: pid_t = 0
-        guard AXUIElementGetPid(hit, &pid) == .success, pid == snapshot.pid else { return FinderProbeResult() }
+        guard AXUIElementGetPid(hit, &pid) == .success else {
+            return FinderProbeResult(diagnostic: .ownershipUnavailable)
+        }
+        guard pid == snapshot.pid else { return FinderProbeResult(diagnostic: .pointerOutsideFinder) }
         var result = resolveFinderHit(hit, snapshot: snapshot, app: app, point: point)
         result.pointerOverFinder = true
         return result
@@ -233,10 +287,13 @@ private final class FinderAccessibilityProbe {
 
     private func resolveFinderHit(_ hit: AXUIElement, snapshot: FinderProbeSnapshot,
                                   app: AXUIElement, point: CGPoint) -> FinderProbeResult {
-        if interactionIsBlocked(app) { return FinderProbeResult(blocked: true) }
+        if interactionIsBlocked(app) { return FinderProbeResult(blocked: true, diagnostic: .interactionBlocked) }
         let chain = ancestors(of: hit, limit: 14)
-        guard !chain.contains(where: isChrome), !chain.contains(where: isMenu) else {
-            return FinderProbeResult(blocked: chain.contains(where: isMenu))
+        if chain.contains(where: isMenu) {
+            return FinderProbeResult(blocked: true, diagnostic: .interactionBlocked)
+        }
+        if chain.contains(where: isChrome) {
+            return FinderProbeResult(diagnostic: .finderControls)
         }
         // Candidate elements must be actual hit items, not a viewport, window,
         // toolbar label, a selected child elsewhere, or the directory itself.
@@ -252,17 +309,23 @@ private final class FinderAccessibilityProbe {
         // descendants. The children are filtered to the hit row/cell only.
         for candidate in candidates {
             if let url = directFileURL(candidate) ?? descendantFileURL(candidate, depth: 2) {
-                return result(url: url, bounds: rect, coordinates: snapshot.coordinates, sourceWindowID: sourceWindowID)
+                return result(url: url, bounds: rect, coordinates: snapshot.coordinates,
+                              sourceWindowID: sourceWindowID, diagnostic: .directItemVerified)
             }
         }
 
-        guard let base = safeDirectoryContext(chain: chain, candidates: candidates),
-              let url = resolveName(candidates: candidates, in: base) else { return FinderProbeResult() }
-        return result(url: url, bounds: rect, coordinates: snapshot.coordinates, sourceWindowID: sourceWindowID)
+        guard let base = safeDirectoryContext(chain: chain, candidates: candidates) else {
+            return FinderProbeResult(diagnostic: .directoryContextUnavailable)
+        }
+        guard let url = resolveName(candidates: candidates, in: base) else {
+            return FinderProbeResult(diagnostic: .nameUnresolved)
+        }
+        return result(url: url, bounds: rect, coordinates: snapshot.coordinates,
+                      sourceWindowID: sourceWindowID, diagnostic: .uniqueNameVerified)
     }
 
     private func result(url: URL, bounds: CGRect?, coordinates: FinderScreenCoordinates,
-                        sourceWindowID: Int?) -> FinderProbeResult {
+                        sourceWindowID: Int?, diagnostic: FinderDiagnostic) -> FinderProbeResult {
         let now = Date()
         if cachedNode?.url != url || now.timeIntervalSince(cachedNodeDate) > 0.8 {
             if let node = try? DirectoryReader.node(at: url) {
@@ -283,9 +346,9 @@ private final class FinderAccessibilityProbe {
             }
             cachedNodeDate = now
         }
-        guard let cachedNode else { return FinderProbeResult() }
+        guard let cachedNode else { return FinderProbeResult(diagnostic: .itemUnreadable) }
         return FinderProbeResult(node: cachedNode, bounds: bounds.map(coordinates.appKitRect),
-                                 sourceWindowID: sourceWindowID)
+                                 sourceWindowID: sourceWindowID, diagnostic: diagnostic)
     }
 
     private func windowID(_ window: AXUIElement) -> Int {
